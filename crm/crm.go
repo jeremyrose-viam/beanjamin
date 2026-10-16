@@ -43,6 +43,19 @@ type Config struct {
 	// SlackNotifierName is an optional viam:notifications:slack service that
 	// announces each reward as it becomes fully funded.
 	SlackNotifierName string `json:"slack_notifier_name,omitempty"`
+	// RewardsRecapHeader heads the send_rewards_recap message, so machines
+	// posting to one channel can be told apart. Defaults to "Rewards status".
+	RewardsRecapHeader string `json:"rewards_recap_header,omitempty"`
+}
+
+// defaultRewardsRecapHeader heads the recap when rewards_recap_header is unset.
+const defaultRewardsRecapHeader = "Rewards status"
+
+func (cfg *Config) rewardsRecapHeader() string {
+	if h := strings.TrimSpace(cfg.RewardsRecapHeader); h != "" {
+		return h
+	}
+	return defaultRewardsRecapHeader
 }
 
 // Validate checks data_dir and the rewards, and returns the Slack notifier as
@@ -72,6 +85,10 @@ type crm struct {
 	logger logging.Logger
 	store  *Store
 	slack  *report.Notifier // nil when slack_notifier_name is unset
+	// rewardsURL is the ordering app's rewards page, linked from the recap.
+	rewardsURL string
+	// recapHeader heads the rewards recap.
+	recapHeader string
 }
 
 func newCRM(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -101,7 +118,14 @@ func newCRM(ctx context.Context, deps resource.Dependencies, rawConf resource.Co
 	}
 
 	logger.Infof("ledger at %s, %d reward(s) configured", path, len(conf.Rewards))
-	return &crm{name: rawConf.ResourceName(), logger: logger, store: store, slack: slack}, nil
+	return &crm{
+		name:        rawConf.ResourceName(),
+		logger:      logger,
+		store:       store,
+		slack:       slack,
+		rewardsURL:  report.RewardsPageURL(os.Getenv("VIAM_MACHINE_PART_ID")),
+		recapHeader: conf.rewardsRecapHeader(),
+	}, nil
 }
 
 func (c *crm) Name() resource.Name {
@@ -130,8 +154,10 @@ func (c *crm) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any
 		res, err = c.creditPoints(cmd["credit_points"])
 	case cmd["list_accounts"] != nil:
 		res, err = c.listAccounts(cmd["list_accounts"])
+	case cmd["send_rewards_recap"] != nil:
+		res, err = c.sendRewardsRecap(ctx, cmd["send_rewards_recap"])
 	default:
-		err = fmt.Errorf("unknown command, supported: get_rewards, contribute_points, credit_points, list_accounts")
+		err = fmt.Errorf("unknown command, supported: get_rewards, contribute_points, credit_points, list_accounts, send_rewards_recap")
 	}
 	if err != nil {
 		c.logger.Warnw("DoCommand", "error", err)
