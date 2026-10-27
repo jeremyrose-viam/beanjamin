@@ -10,6 +10,7 @@ The `viam:beanjamin` module provides these models for arm-based automation workf
 6. **`viam:beanjamin:customer-detector`** - A generic service that identifies return customers via facial recognition using the [`viam:vision:face-identification`](https://github.com/viam-modules/viam-face-identification) vision service.
 7. **`viam:beanjamin:crm`** - A generic service holding customer profiles keyed by email: a loyalty point per completed drink, and shared rewards customers pool those points toward.
 8. **`viam:beanjamin:chore-wheel`** - A generic service that posts the weekly maintenance rota to Slack, rotating a roster of people through a list of chores.
+9. **`viam:beanjamin:refill-display`** - A generic service that keeps the stream deck's Refill page showing live counts, coloured by how close each consumable is to needing a refill.
 
 ---
 
@@ -1329,6 +1330,100 @@ Scheduling lives in the machine config, exactly as for the coffee service's [dai
 ```
 
 The digest's `CRON_TZ=` caveat applies here too, with one wrinkle of its own: the week number comes from the calendar *date* in the timezone the command runs in. A job firing at 9am New York and a hand-run at 9am London on the same Monday agree; a hand-run late Sunday evening in New York is still last week. Fire it on Mondays and none of this matters.
+
+---
+
+## Model: `viam:beanjamin:refill-display`
+
+**API:** `rdk:service:generic`
+
+The Refill page on the stream deck is where someone says "I refilled the beans". This service makes the page answer back: each button shows its counter and is coloured by how close that consumable is to needing a refill.
+
+| Colour | Meaning |
+| ------ | ------- |
+| green  | The count is 0, right after a refill. |
+| blue   | The count is above 0 and the monitor's rule is not firing. |
+| orange | Optional (`near_percent`): the count is within that percent of the threshold, but the rule isn't firing yet. |
+| red    | The monitor's rule for the counter is firing (the count has reached its threshold). |
+
+Outside a rule's `active_windows` or during a snooze the monitor freezes the rule, so its `<key>_triggered` flag goes stale (a weekend refill would stay red until Monday). While a rule is snoozed the display judges by the count instead: red when it has reached the reported `<key>_threshold`.
+
+The service only reads a [`viam:sensor-bundle:sensor-monitor`](https://github.com/viam-modules/sensor-bundle) and tells the stream deck what to show, so the thresholds stay in the monitor's `rules` and the stream deck module stays generic. It needs a stream deck module version that supports key `name` and page-aware `update_display` (`erh:viam-streamdeck`), and keys that carry a `name`.
+
+### Configuration
+
+```json
+{
+  "monitor_sensor_name": "<string>",
+  "usage_sensor_name": "<string>",
+  "stream_deck_name": "<string>",
+  "page": "<string>",
+  "buttons": [
+    { "name": "<string>", "reading": "<string>", "label": "<string>", "text": "<string>" }
+  ],
+  "near_percent": <number>,
+  "colors": { "fresh": "<string>", "ok": "<string>", "near": "<string>", "due": "<string>" },
+  "poll_interval_seconds": <number>
+}
+```
+
+| Name                    | Type   | Required | Description |
+| ----------------------- | ------ | -------- | ----------- |
+| `monitor_sensor_name`   | string | Yes      | The `sensor-monitor` sensor to read. Its readings supply each count, its `<key>_triggered` flag supplies "due", and its `<key>_threshold` supplies the limit shown after the slash. |
+| `usage_sensor_name`     | string | Yes      | The `stateful-sensor` that holds the counters. A button's `refill` command resets its counter here. |
+| `stream_deck_name`      | string | Yes      | The stream deck generic service to update. |
+| `page`                  | string | No       | The stream deck page the buttons are on, for example `"Refill"`. If omitted, whichever page is showing. |
+| `buttons`               | list   | Yes      | At least 1. Each button ties a stream deck key to a counter (below). |
+| `near_percent`          | number | No       | Turns on the warning colour for a counter within this percent of its threshold: `20` means from 80% of the way there (Water 20/25 and up, Beans 16/20 and up). At least 0 and under 100; unset or 0 turns it off. It assumes a counter that counts up toward its limit, as the refill rules do, and it needs the monitor's `<key>_threshold`. |
+| `colors`                | object | No       | Background colours, by CSS colour name (the stream deck module doesn't take hex codes). Defaults: `fresh` green, `ok` blue, `near` salmon, `due` red. |
+| `poll_interval_seconds` | number | No       | How often the monitor is read. Defaults to 2. |
+
+Each button has:
+
+| Name      | Type   | Required | Description |
+| --------- | ------ | -------- | ----------- |
+| `name`    | string | Yes      | The stream deck key's `name`. Unique, and not a number. |
+| `reading` | string | Yes      | The counter's key in the monitor's readings, for example `espresso_cups_used`. |
+| `label`   | string | No       | The short title on the button. Defaults to `name`. |
+| `text`    | string | No       | The button text, with `{label}`, `{value}` and `{threshold}` filled in. Defaults to `"{label} {value}/{threshold}"` (for example `Water 12/25`), or just `"{label} {value}"` if the monitor reports no threshold. The stream deck wraps text on spaces and shrinks it to fit, so on a small key a label and its count land on two lines. |
+
+### Example Configuration
+
+```json
+{
+  "monitor_sensor_name": "monitor-sensor",
+  "usage_sensor_name": "usage-sensor",
+  "stream_deck_name": "stream-deck",
+  "page": "Refill",
+  "buttons": [
+    { "name": "water", "reading": "usage", "label": "Water" },
+    { "name": "beans", "reading": "regular_grinds", "label": "Beans" },
+    { "name": "ice", "reading": "ice_dispenses", "label": "Ice", "text": "{label}: {value} uses" }
+  ]
+}
+```
+
+On the stream deck, give each key the same `name` and point it at this service's `refill` command:
+
+```json
+{ "key": 2, "name": "beans", "text": "Beans", "color": "teal",
+  "component": "refill-display", "method": "do_command", "args": [{ "refill": "beans" }] }
+```
+
+Pressing the key resets that counter to 0, asks the monitor to re-check, and repaints, so the button turns green within a couple of seconds instead of waiting for the monitor's next poll.
+
+The refill keys deliberately go through this service rather than straight to the usage sensor: if the display is down or misconfigured, a person can't see what they're resetting, so the buttons don't work either. A failed reset is returned as an error. If only the follow-up (the monitor re-check or the repaint) fails, the counter is still reset and the call succeeds; the buttons catch up on the next poll, and pressing again is harmless.
+
+The service sends only the buttons that changed, and everything again every 30 seconds so a stream deck that reloaded its config catches up. Without `refill`, a count can lag a reset by up to the monitor's own `poll_interval_seconds`.
+
+### DoCommand
+
+| Command | Description |
+| ------- | ----------- |
+| `{"refill": "<button name>"}` | Reset that button's counter to 0 on the usage sensor, ask the monitor to re-check, and repaint. Returns `{"refill", "reading", "refreshed"}`; `refreshed` is false if the re-check or repaint failed (the counter is still reset). An unknown button name is an error. |
+| `{"refresh": true}` | Repaint every button now. Returns `{"buttons": {"<name>": {"text", "color", "state"}}}`. |
+
+`Status` returns the same per-button map for what each button last showed. A button's `state` is `fresh`, `ok`, `near` or `due`.
 
 ---
 
