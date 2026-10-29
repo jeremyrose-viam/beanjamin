@@ -6,45 +6,20 @@ import (
 	"testing"
 
 	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/testutils/inject"
 
 	"beanjamin/coffee/geom"
 )
 
-// The return is the pickup replayed: the same offsets composed onto the recorded
-// grasp centroid, so the bottle is set back down exactly where it was lifted
-// from and the descent retraces the retreat.
-func TestMilkReturnPosesReplayThePickupOffsets(t *testing.T) {
-	s := &beanjaminCoffee{cfg: &Config{
-		MilkApproachRelativePose: &RelativePose{X: 10, Y: -20, Z: 150, OZ: -1},
-		MilkGrabRelativePose:     &RelativePose{X: 10, Y: -20, Z: 5, OZ: -1},
-	}}
-	centroid := r3.Vector{X: 300, Y: -450, Z: 620}
-
-	approach, place := s.milkReturnPoses(centroid)
-
-	wantApproach := geom.PoseRelativeTo(centroid, relativePoseToSpatial(s.cfg.MilkApproachRelativePose))
-	wantPlace := geom.PoseRelativeTo(centroid, relativePoseToSpatial(s.cfg.MilkGrabRelativePose))
-	if approach.Point() != wantApproach.Point() {
-		t.Errorf("approach point = %v, want %v", approach.Point(), wantApproach.Point())
-	}
-	if place.Point() != wantPlace.Point() {
-		t.Errorf("place point = %v, want %v", place.Point(), wantPlace.Point())
-	}
-	// The standoff must sit above the set-down pose, or the "descend onto the
-	// shelf" move would be a climb.
-	if approach.Point().Z <= place.Point().Z {
-		t.Errorf("approach Z %.1f should be above place Z %.1f", approach.Point().Z, place.Point().Z)
-	}
-}
-
-// Returning with nothing recorded must fail rather than drive an empty gripper
+// Returning with no milk out must fail rather than drive an empty gripper
 // at a shelf where the bottle may already stand.
 func TestReturnMilkBottleWithoutPickupFails(t *testing.T) {
 	s := &beanjaminCoffee{cfg: &Config{CanServeIcedLatte: true}, gripper: inject.NewGripper("g")}
 	err := s.returnMilkBottle(context.Background(), context.Background())
-	if err == nil || !strings.Contains(err.Error(), "no recorded pickup position") {
-		t.Fatalf("expected a no-recorded-position error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no milk is out") {
+		t.Fatalf("expected a no-milk-out error, got %v", err)
 	}
 }
 
@@ -53,8 +28,8 @@ func TestReturnMilkBottleWithoutPickupFails(t *testing.T) {
 func TestMilkActionsRequireConfiguredMilk(t *testing.T) {
 	s := &beanjaminCoffee{cfg: &Config{}}
 	actions := map[string]func(ctx, cancelCtx context.Context) error{
-		"add_milk":    s.addMilk,
-		"fetch_milk":  s.fetchMilkBottle,
+		"add_milk":    func(ctx, cancelCtx context.Context) error { return s.addMilk(ctx, cancelCtx, "whole") },
+		"fetch_milk":  func(ctx, cancelCtx context.Context) error { return s.fetchMilkBottle(ctx, cancelCtx, "whole") },
 		"pour_milk":   s.pourMilk,
 		"return_milk": s.returnMilkBottle,
 	}
@@ -104,13 +79,95 @@ func TestHeldGeometryCachePerLabel(t *testing.T) {
 	}
 }
 
-// A frame-system reset drops the recorded pickup position along with the cached
-// geometry — it describes a bottle the gripper is no longer known to hold.
-func TestClearHeldGeometryForgetsMilkPickup(t *testing.T) {
-	centroid := r3.Vector{X: 1, Y: 2, Z: 3}
-	s := &beanjaminCoffee{cfg: &Config{}, milkGraspCentroid: &centroid}
+// A frame-system reset forgets which milk is out along with the cached geometry
+// — it describes a bottle the gripper is no longer known to hold.
+func TestClearHeldGeometryForgetsHeldMilk(t *testing.T) {
+	s := &beanjaminCoffee{cfg: &Config{}, heldMilk: "oat"}
 	s.clearHeldGeometry()
-	if s.milkGraspCentroid != nil {
-		t.Errorf("milkGraspCentroid = %v, want nil after clearHeldGeometry", *s.milkGraspCentroid)
+	if s.heldMilk != "" {
+		t.Errorf("heldMilk = %q, want empty after clearHeldGeometry", s.heldMilk)
+	}
+}
+
+// Each milk is looked up to the spot it stands at; a milk that isn't configured
+// has no spot.
+func TestMilkSpot(t *testing.T) {
+	s := &beanjaminCoffee{cfg: &Config{MilkOptions: testMilks}}
+	if spot, err := s.milkSpot("oat"); err != nil || spot != "right" {
+		t.Errorf("milkSpot(oat) = %q, %v; want right", spot, err)
+	}
+	if _, err := s.milkSpot("soy"); err == nil {
+		t.Error("milkSpot(soy) should fail for an unconfigured milk")
+	}
+}
+
+// Every iced latte and hand-run milk action uses the first milk for now.
+func TestFirstMilk(t *testing.T) {
+	s := &beanjaminCoffee{cfg: &Config{MilkOptions: testMilks}}
+	if got := s.firstMilk(); got != "whole" {
+		t.Errorf("firstMilk = %q, want whole", got)
+	}
+}
+
+// Fetching a second bottle while one is out would leave nothing to say which
+// spot the first goes back to.
+func TestFetchMilkWhileOneIsOutFails(t *testing.T) {
+	s := &beanjaminCoffee{cfg: &Config{CanServeIcedLatte: true, MilkOptions: testMilks}, gripper: inject.NewGripper("g"), heldMilk: "whole"}
+	err := s.fetchMilkBottle(context.Background(), context.Background(), "oat")
+	if err == nil || !strings.Contains(err.Error(), "already out") {
+		t.Fatalf("expected an already-out error, got %v", err)
+	}
+}
+
+// fridgeFloorFS is a grip point at gripZ above a fridge floor whose top face is
+// at Z=200 and spans the bottle's spot.
+func fridgeFloorFS(t *testing.T, gripZ float64) *referenceframe.FrameSystem {
+	t.Helper()
+	fs := gripPointStaticFS(t, spatialmath.NewPoseFromPoint(r3.Vector{X: 400, Y: 100, Z: gripZ}))
+	floorBox, err := spatialmath.NewBox(spatialmath.NewPoseFromPoint(r3.Vector{X: 400, Y: 100, Z: 190}),
+		r3.Vector{X: 400, Y: 400, Z: 20}, "fridge-floor")
+	if err != nil {
+		t.Fatalf("new floor box: %v", err)
+	}
+	floor, err := referenceframe.NewStaticFrameWithGeometry("fridge-floor", spatialmath.NewZeroPose(), floorBox)
+	if err != nil {
+		t.Fatalf("new floor frame: %v", err)
+	}
+	if err := fs.AddFrame(floor, fs.World()); err != nil {
+		t.Fatalf("add floor frame: %v", err)
+	}
+	return fs
+}
+
+// The bottle model stands on the fridge floor wherever up the bottle the grab
+// pose was taught, keeping the grip point's X/Y.
+func TestMilkBottleBoxRestsOnSurface(t *testing.T) {
+	dims := &ContainerDimensions{DiameterMm: 90, HeightMm: 250}
+	wantCenter := r3.Vector{X: 400, Y: 100, Z: 200 + surfaceRestClearanceMm + dims.HeightMm/2}
+	for _, gripZ := range []float64{240, 325, 430} {
+		fs := fridgeFloorFS(t, gripZ)
+		s := heldGeomService(t, fs)
+		s.cfg.MilkBottleDimensions = dims
+		box, err := s.milkBottleBox(fs, referenceframe.NewZeroInputs(fs))
+		if err != nil {
+			t.Fatalf("grip Z=%.0f: milkBottleBox: %v", gripZ, err)
+		}
+		requireVecEqual(t, box.Pose().Point(), wantCenter, 1e-6)
+	}
+}
+
+func TestMilkBottleBoxRejectsUnseatableBottle(t *testing.T) {
+	dims := &ContainerDimensions{DiameterMm: 90, HeightMm: 250}
+	for name, fs := range map[string]*referenceframe.FrameSystem{
+		// Nothing modeled under the bottle.
+		"no surface": gripPointStaticFS(t, spatialmath.NewPoseFromPoint(r3.Vector{X: 400, Y: 100, Z: 325})),
+		// The grip point is above the top of a bottle standing on the floor.
+		"grab above the bottle": fridgeFloorFS(t, 470),
+	} {
+		s := heldGeomService(t, fs)
+		s.cfg.MilkBottleDimensions = dims
+		if _, err := s.milkBottleBox(fs, referenceframe.NewZeroInputs(fs)); err == nil {
+			t.Errorf("%s: milkBottleBox succeeded, want an error", name)
+		}
 	}
 }
