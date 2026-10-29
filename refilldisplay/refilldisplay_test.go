@@ -309,6 +309,42 @@ func TestRenderNearBand(t *testing.T) {
 	}
 }
 
+// A button's own threshold stands in when the monitor reports none, so the
+// display doesn't need a monitor that reports "<key>_threshold".
+func TestRenderButtonThreshold(t *testing.T) {
+	colors := Colors{}.withDefaults()
+	b := Button{Name: "water", Reading: "usage", Label: "Water", Threshold: 25}
+
+	p, ok := render(b, map[string]any{"usage": 12.0, "usage_triggered": false}, colors, 0)
+	if !ok || p.Text != "Water 12/25" || p.Color != "teal" {
+		t.Errorf("config threshold: got %+v ok=%v, want Water 12/25 teal", p, ok)
+	}
+
+	// The monitor's own threshold wins when it reports one.
+	p, _ = render(b, map[string]any{"usage": 12.0, "usage_threshold": 30.0}, colors, 0)
+	if p.Text != "Water 12/30" {
+		t.Errorf("monitor threshold should win: got %q", p.Text)
+	}
+
+	// The near band uses it: 20 of 25 is within 20%.
+	p, _ = render(b, map[string]any{"usage": 20.0, "usage_triggered": false}, colors, 20)
+	if p.State != stateNear || p.Color != "salmon" {
+		t.Errorf("near band with a config threshold: got %+v, want near/salmon", p)
+	}
+
+	// While snoozed the count is judged against it.
+	p, _ = render(b, map[string]any{"usage": 26.0, "usage_triggered": false, "usage_snoozed": true}, colors, 0)
+	if p.State != stateDue {
+		t.Errorf("snoozed past the config threshold: got %+v, want due", p)
+	}
+
+	// Unset means none, as before.
+	p, _ = render(Button{Name: "water", Reading: "usage", Label: "Water"}, map[string]any{"usage": 12.0}, colors, 0)
+	if p.Text != "Water 12" {
+		t.Errorf("no threshold anywhere: got %q", p.Text)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	good := Config{
 		MonitorSensorName: "monitor-sensor",
@@ -336,6 +372,7 @@ func TestValidate(t *testing.T) {
 		"negative polling": func(c *Config) { c.PollIntervalSeconds = -1 },
 		"negative near":    func(c *Config) { c.NearPercent = -5 },
 		"near of 100":      func(c *Config) { c.NearPercent = 100 },
+		"negative limit":   func(c *Config) { c.Buttons[0].Threshold = -1 },
 	}
 	for name, mutate := range bad {
 		c := good

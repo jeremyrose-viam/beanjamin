@@ -86,9 +86,14 @@ type Button struct {
 	Reading string `json:"reading"`
 	// Label is the short title on the button. Defaults to Name.
 	Label string `json:"label,omitempty"`
+	// Threshold is the counter's limit, for when the monitor doesn't report one
+	// as "<key>_threshold". It repeats the monitor rule's threshold, so keep the
+	// two in step. A threshold the monitor reports wins over this. Unset or 0
+	// means none.
+	Threshold float64 `json:"threshold,omitempty"`
 	// Text is the button text, with {label}, {value} and {threshold} filled in.
 	// Defaults to "{label} {value}/{threshold}" (for example "Water 12/25"), or
-	// just "{label} {value}" if the monitor reports no threshold. The stream deck
+	// just "{label} {value}" if there is no threshold. The stream deck
 	// wraps text on spaces and shrinks it to fit, so on a small key this reads as
 	// the label over the count.
 	Text string `json:"text,omitempty"`
@@ -153,6 +158,9 @@ func (cfg *Config) Validate(path string) ([]string, []string, error) {
 			return nil, nil, fmt.Errorf("%s: button %q listed twice", path, b.Name)
 		}
 		seen[b.Name] = true
+		if b.Threshold < 0 {
+			return nil, nil, fmt.Errorf("%s: button %q threshold must not be negative", path, b.Name)
+		}
 		if b.Reading == "" {
 			return nil, nil, fmt.Errorf("%s: button %q needs a reading", path, b.Name)
 		}
@@ -456,8 +464,12 @@ func render(b Button, readings map[string]any, colors Colors, nearPercent float6
 	if !ok {
 		return painted{}, false
 	}
-	// The monitor reports "<key>_threshold" for a reading it has a rule for.
+	// The monitor may report "<key>_threshold" for a reading it has a rule for.
+	// If it doesn't, fall back to the button's own threshold.
 	threshold, hasLimit := number(readings[b.Reading+"_threshold"])
+	if !hasLimit && b.Threshold > 0 {
+		threshold, hasLimit = b.Threshold, true
+	}
 
 	// A rule's "<key>_triggered" flag is absent if the monitor has no rule for
 	// the reading, which just means it can never be due.

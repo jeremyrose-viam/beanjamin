@@ -1359,7 +1359,7 @@ The service only reads a [`viam:sensor-bundle:sensor-monitor`](https://github.co
   "stream_deck_name": "<string>",
   "page": "<string>",
   "buttons": [
-    { "name": "<string>", "reading": "<string>", "label": "<string>", "text": "<string>" }
+    { "name": "<string>", "reading": "<string>", "label": "<string>", "threshold": <number>, "text": "<string>" }
   ],
   "near_percent": <number>,
   "colors": { "fresh": "<string>", "ok": "<string>", "near": "<string>", "due": "<string>" },
@@ -1369,7 +1369,7 @@ The service only reads a [`viam:sensor-bundle:sensor-monitor`](https://github.co
 
 | Name                    | Type   | Required | Description |
 | ----------------------- | ------ | -------- | ----------- |
-| `monitor_sensor_name`   | string | Yes      | The `sensor-monitor` sensor to read. Its readings supply each count, its `<key>_triggered` flag supplies "due", and its `<key>_threshold` supplies the limit shown after the slash. |
+| `monitor_sensor_name`   | string | Yes      | The `sensor-monitor` sensor to read. Its readings supply each count and its `<key>_triggered` flag supplies "due". If it reports `<key>_threshold`, that supplies the limit shown after the slash. |
 | `usage_sensor_name`     | string | Yes      | The `stateful-sensor` that holds the counters. A button's `refill` command resets its counter here. |
 | `stream_deck_name`      | string | Yes      | The stream deck generic service to update. |
 | `page`                  | string | No       | The stream deck page the buttons are on, for example `"Refill"`. If omitted, whichever page is showing. |
@@ -1385,7 +1385,8 @@ Each button has:
 | `name`    | string | Yes      | The stream deck key's `name`. Unique, and not a number. |
 | `reading` | string | Yes      | The counter's key in the monitor's readings, for example `espresso_cups_used`. |
 | `label`   | string | No       | The short title on the button. Defaults to `name`. |
-| `text`    | string | No       | The button text, with `{label}`, `{value}` and `{threshold}` filled in. Defaults to `"{label} {value}/{threshold}"` (for example `Water 12/25`), or just `"{label} {value}"` if the monitor reports no threshold. The stream deck wraps text on spaces and shrinks it to fit, so on a small key a label and its count land on two lines. |
+| `threshold` | number | No     | The counter's limit, shown after the slash and used for `near_percent`. It repeats the monitor rule's `threshold`, so keep the two in step. If the monitor reports `<key>_threshold`, that value is used instead. Unset or 0 means none. |
+| `text`    | string | No       | The button text, with `{label}`, `{value}` and `{threshold}` filled in. Defaults to `"{label} {value}/{threshold}"` (for example `Water 12/25`), or just `"{label} {value}"` if there is no threshold. The stream deck wraps text on spaces and shrinks it to fit, so on a small key a label and its count land on two lines. |
 
 ### Example Configuration
 
@@ -1396,8 +1397,8 @@ Each button has:
   "stream_deck_name": "stream-deck",
   "page": "Refill",
   "buttons": [
-    { "name": "water", "reading": "usage", "label": "Water" },
-    { "name": "beans", "reading": "regular_grinds", "label": "Beans" },
+    { "name": "water", "reading": "usage", "label": "Water", "threshold": 25 },
+    { "name": "beans", "reading": "regular_grinds", "label": "Beans", "threshold": 20 },
     { "name": "ice", "reading": "ice_dispenses", "label": "Ice", "text": "{label}: {value} uses" }
   ]
 }
