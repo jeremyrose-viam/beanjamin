@@ -19,6 +19,7 @@ const (
 	//filter pose switches
 	filterPoseGrinderApproach            = "grinder_approach"
 	filterPoseGrinderActivate            = "grinder_activate"
+	filterPoseGrinderCollect             = "grinder_collect"
 	filterPoseTamperApproach             = "tamper_approach"
 	filterPoseTamperActivate             = "tamper_activate"
 	filterPoseCoffeeApproach             = "coffee_approach"
@@ -122,6 +123,7 @@ func (s *beanjaminCoffee) requiredPoses() []requiredPose {
 		// step 1: grind (regular)
 		{s.filterSw, filterPoseGrinderApproach},
 		{s.filterSw, filterPoseGrinderActivate},
+		{s.filterSw, filterPoseGrinderCollect},
 		// step 2: tamp
 		{s.filterSw, filterPoseTamperApproach},
 		{s.filterSw, filterPoseTamperActivate},
@@ -169,10 +171,11 @@ func (s *beanjaminCoffee) requiredPoses() []requiredPose {
 
 	// Each extra grinder's poses, named after its beans.
 	for _, beans := range s.cfg.beanNames() {
-		approach, activate := grinderPoses(beans)
+		p := grinderPoses(beans)
 		poses = append(poses,
-			requiredPose{s.filterSw, approach},
-			requiredPose{s.filterSw, activate},
+			requiredPose{s.filterSw, p.approach},
+			requiredPose{s.filterSw, p.activate},
+			requiredPose{s.filterSw, p.collect},
 		)
 	}
 
@@ -255,14 +258,22 @@ func (s *beanjaminCoffee) validateConfiguredPoses(ctx context.Context) error {
 	return nil
 }
 
+// grinderPoseNames are the filter-switch poses at one grinder: approach, the
+// end of the free-planned move to the grinder; activate, pressing its button;
+// and collect, under its chute while it dispenses.
+type grinderPoseNames struct {
+	approach, activate, collect string
+}
+
 // grinderPoses names the filter-switch poses at the grinder for beans: the
-// regular grinder's grinder_approach / grinder_activate, and for every other
-// beans <beans>_grinder_approach / <beans>_grinder_activate.
-func grinderPoses(beans string) (approach, activate string) {
+// regular grinder's grinder_approach / grinder_activate / grinder_collect,
+// and for every other beans the same names prefixed with <beans>_.
+func grinderPoses(beans string) grinderPoseNames {
+	p := grinderPoseNames{filterPoseGrinderApproach, filterPoseGrinderActivate, filterPoseGrinderCollect}
 	if beans == "" || beans == order.BeansRegular {
-		return filterPoseGrinderApproach, filterPoseGrinderActivate
+		return p
 	}
-	return beans + "_" + filterPoseGrinderApproach, beans + "_" + filterPoseGrinderActivate
+	return grinderPoseNames{beans + "_" + p.approach, beans + "_" + p.activate, beans + "_" + p.collect}
 }
 
 // grinderShieldFrame names the obstacle guarding the button of beans'
@@ -283,8 +294,9 @@ func grinderShieldFrame(beans string) string {
 func checkGrinderShields(fs *referenceframe.FrameSystem, beans []string) error {
 	for _, b := range beans {
 		if name := grinderShieldFrame(b); fs.Frame(name) == nil {
-			return fmt.Errorf("bean_options %q: grinder button shield %q not found in the frame system — "+
-				"apply the grinder fragment with prefix %q", b, name, strings.TrimSuffix(name, "-grinder-button-shield"))
+			return fmt.Errorf("bean_options %q: grinder button shield %q is not in the frame system — "+
+				"it is either disabled (check fragment_mods) or missing (apply the grinder fragment with prefix %q)",
+				b, name, strings.TrimSuffix(name, "-grinder-button-shield"))
 		}
 	}
 	return nil

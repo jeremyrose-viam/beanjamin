@@ -39,11 +39,19 @@ func TestRequiredPosesConditional(t *testing.T) {
 
 	beans := (&beanjaminCoffee{cfg: &Config{BeanOptions: []BeanOption{{Name: "decaf"}, {Name: "light_roast"}}}}).requiredPoses()
 	for _, name := range []string{
-		"decaf_grinder_approach", "decaf_grinder_activate",
-		"light_roast_grinder_approach", "light_roast_grinder_activate",
+		"decaf_grinder_approach", "decaf_grinder_activate", "decaf_grinder_collect",
+		"light_roast_grinder_approach", "light_roast_grinder_activate", "light_roast_grinder_collect",
 	} {
 		if !hasPose(beans, name) {
 			t.Errorf("bean_options should require %q", name)
+		}
+	}
+	// The regular grinder, and decaf enabled through can_serve_decaf, need
+	// their collect poses like any other grinder.
+	legacy := (&beanjaminCoffee{cfg: &Config{CanServeDecaf: true}}).requiredPoses()
+	for _, name := range []string{"grinder_collect", "decaf_grinder_activate", "decaf_grinder_collect"} {
+		if !hasPose(legacy, name) {
+			t.Errorf("should require %q", name)
 		}
 	}
 

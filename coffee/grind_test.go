@@ -16,10 +16,10 @@ import (
 // planner route the traverse through the button the shield protects.
 func TestGrindStepsCollisionScope(t *testing.T) {
 	s := &beanjaminCoffee{cfg: &Config{}}
-	steps := s.grindSteps(filterPoseGrinderApproach, filterPoseGrinderActivate, grinderButtonCollisions(order.BeansRegular))
+	steps := s.grindSteps(grinderPoses(order.BeansRegular), grinderButtonCollisions(order.BeansRegular))
 
-	if len(steps) != 4 {
-		t.Fatalf("grindSteps returned %d steps, want 4 (approach, activate, retreat, rotate)", len(steps))
+	if len(steps) != 5 {
+		t.Fatalf("grindSteps returned %d steps, want 5 (approach, activate, collect, rotate, retreat)", len(steps))
 	}
 
 	tests := []struct {
@@ -31,8 +31,9 @@ func TestGrindStepsCollisionScope(t *testing.T) {
 	}{
 		{"approach", steps[0], filterPoseGrinderApproach, false, false},
 		{"activate", steps[1], filterPoseGrinderActivate, false, true},
-		{"retreat", steps[2], filterPoseGrinderApproach, false, true},
-		{"rotate", steps[3], filterPoseGrinderApproach, true, true},
+		{"collect", steps[2], filterPoseGrinderCollect, false, true},
+		{"rotate", steps[3], filterPoseGrinderCollect, true, true},
+		{"retreat", steps[4], filterPoseGrinderApproach, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,6 +45,9 @@ func TestGrindStepsCollisionScope(t *testing.T) {
 			}
 			if gotCollision := len(tt.step.AllowedCollisions) > 0; gotCollision != tt.wantCollision {
 				t.Errorf("has AllowedCollisions = %v, want %v", gotCollision, tt.wantCollision)
+			}
+			if tt.name != "approach" && tt.step.LinearConstraint == nil {
+				t.Error("every move after the approach should be a straight line")
 			}
 		})
 	}
@@ -60,9 +64,9 @@ func TestGrinderNames(t *testing.T) {
 		{"decaf", "decaf_grinder_approach", "decaf_grinder_activate", "decaf-grinder-button-shield", "grind_decaf"},
 		{"light_roast", "light_roast_grinder_approach", "light_roast_grinder_activate", "light-roast-grinder-button-shield", "grind_light_roast"},
 	} {
-		approach, activate := grinderPoses(tt.beans)
-		if approach != tt.approach || activate != tt.activate {
-			t.Errorf("grinderPoses(%q) = %q, %q; want %q, %q", tt.beans, approach, activate, tt.approach, tt.activate)
+		want := grinderPoseNames{tt.approach, tt.activate, strings.Replace(tt.approach, "approach", "collect", 1)}
+		if got := grinderPoses(tt.beans); got != want {
+			t.Errorf("grinderPoses(%q) = %+v, want %+v", tt.beans, got, want)
 		}
 		if got := grinderShieldFrame(tt.beans); got != tt.shield {
 			t.Errorf("grinderShieldFrame(%q) = %q, want %q", tt.beans, got, tt.shield)
@@ -111,7 +115,8 @@ func TestCheckGrinderShields(t *testing.T) {
 		t.Errorf("decaf shield present, got %v", err)
 	}
 	err := checkGrinderShields(fs, []string{"decaf", "light_roast"})
-	if err == nil || !strings.Contains(err.Error(), "light-roast-grinder-button-shield") || !strings.Contains(err.Error(), `prefix "light-roast"`) {
+	if err == nil || !strings.Contains(err.Error(), "light-roast-grinder-button-shield") ||
+		!strings.Contains(err.Error(), "disabled") || !strings.Contains(err.Error(), `prefix "light-roast"`) {
 		t.Errorf("want an error naming the missing light-roast shield and its prefix, got %v", err)
 	}
 	if err := checkGrinderShields(fs, nil); err != nil {
