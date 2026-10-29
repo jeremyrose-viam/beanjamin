@@ -115,7 +115,7 @@ type beanjaminCoffee struct {
 	orderSensorSink       orderSensorSink // optional; named order-sensor from deps, nil if unset
 	// Optional usage sensor updated during the brew lifecycle (sensor_usage.go).
 	// nil when usage_sensor_name is unset, in which case every update is a
-	// no-op. Holds all counters keyed by regular_grinds, decaf_grinds, usage,
+	// no-op. Holds all counters keyed by <beans>_grinds, usage,
 	// cleanings, espresso_cups_used, latte_glasses_used, and
 	// successful_consecutive_orders.
 	usageSensor sensor.Sensor
@@ -177,6 +177,9 @@ func newBeanjaminCoffee(ctx context.Context, deps resource.Dependencies, rawConf
 	conf, err := resource.NativeConfig[*Config](rawConf)
 	if err != nil {
 		return nil, err
+	}
+	if conf.CanServeDecaf {
+		logger.Warnf(`can_serve_decaf is deprecated and is read as "bean_options": [{"name": "decaf"}]; move it to bean_options`)
 	}
 	return NewCoffee(ctx, deps, rawConf.ResourceName(), conf, logger)
 }
@@ -268,6 +271,10 @@ func NewCoffee(ctx context.Context, deps resource.Dependencies, name resource.Na
 	// The camera backs every vision pickup, so it is checked once here.
 	if cachedFS.Frame(conf.SrcCameraName) == nil {
 		return nil, fmt.Errorf("src_camera_name %q not found in frame system — add the camera to the frame system fragment", conf.SrcCameraName)
+	}
+
+	if err := checkGrinderShields(cachedFS, conf.beanNames()); err != nil {
+		return nil, err
 	}
 
 	// Cup pickup is always vision-driven; the glass and milk pipelines mirror it

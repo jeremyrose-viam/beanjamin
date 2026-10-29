@@ -7,6 +7,7 @@ package coffee
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.viam.com/rdk/module/trace"
@@ -42,7 +43,8 @@ func (s *beanjaminCoffee) Status(ctx context.Context) (map[string]any, error) {
 		}
 		orderMaps[i] = map[string]any{
 			"id":                     o.ID,
-			"drink":                  o.Drink,
+			"drink":                  o.WireDrink(),
+			"beans":                  o.Beans,
 			"customer_name":          o.CustomerName,
 			"modified_customer_name": o.ModifiedCustomerName,
 			"fulfillment":            o.Fulfillment,
@@ -60,13 +62,16 @@ func (s *beanjaminCoffee) Status(ctx context.Context) (map[string]any, error) {
 		// to depth. Returned as float64 so in-process callers see the
 		// same type as gRPC callers (structpb forces all numbers to
 		// double on the wire).
-		"count":           float64(s.queue.Len()),
-		"orders":          orderMaps,
-		"is_paused":       s.lease.isPaused(),
-		"is_busy":         s.lease.busy(),
-		"arm_holder":      s.lease.holderName(),
-		"current_step":    step,
-		"can_serve_decaf": s.cfg.CanServeDecaf,
+		"count":        float64(s.queue.Len()),
+		"orders":       orderMaps,
+		"is_paused":    s.lease.isPaused(),
+		"is_busy":      s.lease.busy(),
+		"arm_holder":   s.lease.holderName(),
+		"current_step": step,
+		// The beans an order may name, regular first, for a client to offer.
+		"bean_options": stringsToAny(s.menu().BeanOptions()),
+		// Kept for clients that predate bean_options.
+		"can_serve_decaf": slices.Contains(s.menu().Beans, "decaf"),
 		"fault_active":    s.faultAlarm.Active(),
 		"accept_delivery": s.deliveryAccepting(),
 	}
@@ -279,4 +284,14 @@ func (s *beanjaminCoffee) handleCloseGripper(ctx context.Context) (map[string]an
 		return nil, fmt.Errorf("failed to close gripper: %w", err)
 	}
 	return map[string]any{"status": "closed", "grabbed": grabbed}, nil
+}
+
+// stringsToAny converts a string slice to []any, the list type the
+// structpb-backed DoCommand wire format accepts.
+func stringsToAny(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, v := range ss {
+		out[i] = v
+	}
+	return out
 }

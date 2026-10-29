@@ -282,7 +282,7 @@ func (s *beanjaminCoffee) cancelOrder(ctx context.Context, v any) (map[string]an
 	s.logger.Infof("cancel_order: dropped queued order %s (%s for %s) — %d order(s) still queued",
 		order.ID, order.Drink, order.CustomerName, remaining)
 
-	if err := s.speaker.Say(ctx, speech.OrderCancelled(order.Drink, order.DisplayName())); err != nil {
+	if err := s.speaker.Say(ctx, speech.OrderCancelled(order.Label(), order.DisplayName())); err != nil {
 		s.logger.Warnf("cancel_order: failed to announce cancellation: %v", err)
 	}
 
@@ -290,7 +290,7 @@ func (s *beanjaminCoffee) cancelOrder(ctx context.Context, v any) (map[string]an
 		"status":        "cancelled",
 		"order_id":      order.ID,
 		"customer_name": order.CustomerName,
-		"drink":         order.Drink,
+		"drink":         order.WireDrink(),
 		"remaining":     float64(remaining),
 	}, nil
 }
