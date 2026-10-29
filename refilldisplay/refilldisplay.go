@@ -1,6 +1,6 @@
 // Package refilldisplay registers the viam:beanjamin:refill-display model, a
 // generic service that keeps the stream deck's Refill page in step with the usage
-// counters: each button shows its live count and is coloured by how close the
+// counters: each button shows its live count and is colored by how close the
 // consumable is to needing a refill.
 //
 // It only reads the sensor-monitor and tells the stream deck what to show, so
@@ -42,7 +42,7 @@ const (
 	callTimeout = 5 * time.Second
 
 	// defaultText is the label, then the count against its limit on a new line.
-	// defaultTextNoLimit is used when the monitor reports no threshold.
+	// defaultTextNoLimit is used when a button has no threshold.
 	defaultText        = "{label} {value}/{threshold}"
 	defaultTextNoLimit = "{label} {value}"
 )
@@ -86,10 +86,9 @@ type Button struct {
 	Reading string `json:"reading"`
 	// Label is the short title on the button. Defaults to Name.
 	Label string `json:"label,omitempty"`
-	// Threshold is the counter's limit, for when the monitor doesn't report one
-	// as "<key>_threshold". It repeats the monitor rule's threshold, so keep the
-	// two in step. A threshold the monitor reports wins over this. Unset or 0
-	// means none.
+	// Threshold is the counter's limit, shown after the slash and used for the
+	// near band and while a rule is snoozed. It repeats the limit in the monitor's
+	// rule for the counter, so keep the two in step. Unset or 0 means none.
 	Threshold float64 `json:"threshold,omitempty"`
 	// Text is the button text, with {label}, {value} and {threshold} filled in.
 	// Defaults to "{label} {value}/{threshold}" (for example "Water 12/25"), or
@@ -114,7 +113,7 @@ type Config struct {
 	Page    string   `json:"page,omitempty"`
 	Buttons []Button `json:"buttons"`
 	Colors  Colors   `json:"colors,omitempty"`
-	// NearPercent, if set, shows a counter in the "near" colour once it is within
+	// NearPercent, if set, shows a counter in the "near" color once it is within
 	// this percent of its threshold (20 means from 80% of the way there), before
 	// the monitor's rule fires. Unset or 0 turns the warning off. It assumes the
 	// counter counts up toward its threshold, as the refill rules do.
@@ -429,9 +428,10 @@ type painted struct {
 	State state
 }
 
-// stateOf classifies a counter. The monitor's rule is the authority on "due",
-// so the threshold lives in one place; 0 is "fresh" (just refilled); "near" is
-// the warning band just short of due; anything else is "ok".
+// stateOf classifies a counter. The monitor's rule is the authority on "due"
+// (render only second-guesses it while the rule is snoozed); 0 is "fresh" (just
+// refilled); "near" is the warning band just short of due; anything else is
+// "ok".
 func stateOf(value float64, triggered, near bool) state {
 	switch {
 	case triggered:
@@ -464,12 +464,9 @@ func render(b Button, readings map[string]any, colors Colors, nearPercent float6
 	if !ok {
 		return painted{}, false
 	}
-	// The monitor may report "<key>_threshold" for a reading it has a rule for.
-	// If it doesn't, fall back to the button's own threshold.
-	threshold, hasLimit := number(readings[b.Reading+"_threshold"])
-	if !hasLimit && b.Threshold > 0 {
-		threshold, hasLimit = b.Threshold, true
-	}
+	// The limit comes from the button, not the monitor: the monitor reports
+	// "<key>_triggered" for a rule but not its threshold.
+	threshold, hasLimit := b.Threshold, b.Threshold > 0
 
 	// A rule's "<key>_triggered" flag is absent if the monitor has no rule for
 	// the reading, which just means it can never be due.

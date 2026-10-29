@@ -10,7 +10,7 @@ The `viam:beanjamin` module provides these models for arm-based automation workf
 6. **`viam:beanjamin:customer-detector`** - A generic service that identifies return customers via facial recognition using the [`viam:vision:face-identification`](https://github.com/viam-modules/viam-face-identification) vision service.
 7. **`viam:beanjamin:crm`** - A generic service holding customer profiles keyed by email: a loyalty point per completed drink, and shared rewards customers pool those points toward.
 8. **`viam:beanjamin:chore-wheel`** - A generic service that posts the weekly maintenance rota to Slack, rotating a roster of people through a list of chores.
-9. **`viam:beanjamin:refill-display`** - A generic service that keeps the stream deck's Refill page showing live counts, coloured by how close each consumable is to needing a refill.
+9. **`viam:beanjamin:refill-display`** - A generic service that keeps the stream deck's Refill page showing live counts, colored by how close each consumable is to needing a refill.
 
 ---
 
@@ -1337,18 +1337,11 @@ The digest's `CRON_TZ=` caveat applies here too, with one wrinkle of its own: th
 
 **API:** `rdk:service:generic`
 
-The Refill page on the stream deck is where someone says "I refilled the beans". This service makes the page answer back: each button shows its counter and is coloured by how close that consumable is to needing a refill.
+The Refill page on the stream deck is where someone says "I refilled the beans". This service makes the page answer back: each button shows its counter and is colored by how close that consumable is to needing a refill.
 
-| Colour | Meaning |
-| ------ | ------- |
-| green  | The count is 0, right after a refill. |
-| teal   | The count is above 0 and the monitor's rule is not firing. |
-| salmon | Optional (`near_percent`): the count is within that percent of the threshold, but the rule isn't firing yet. |
-| red    | The monitor's rule for the counter is firing (the count has reached its threshold). |
+Outside a rule's `active_windows` or during a snooze the monitor freezes the rule, so its `<key>_triggered` flag goes stale (a weekend refill would stay red until Monday). While a rule is snoozed the display judges by the count instead: red when it has reached the button's `threshold`.
 
-Outside a rule's `active_windows` or during a snooze the monitor freezes the rule, so its `<key>_triggered` flag goes stale (a weekend refill would stay red until Monday). While a rule is snoozed the display judges by the count instead: red when it has reached the reported `<key>_threshold`.
-
-The service only reads a [`viam:sensor-bundle:sensor-monitor`](https://github.com/viam-modules/sensor-bundle) and tells the stream deck what to show, so the thresholds stay in the monitor's `rules` and the stream deck module stays generic. It needs a stream deck module version that supports key `name` and page-aware `update_display` (`erh:viam-streamdeck`), and keys that carry a `name`.
+The service only reads a [`viam:sensor-bundle:sensor-monitor`](https://github.com/viam-modules/sensor-bundle) and tells the stream deck what to show, so the stream deck module stays generic. Each button's `threshold` repeats the limit in the monitor's rule for that counter, so keep the two in step. It needs a stream deck module version that supports key `name` and page-aware `update_display` (`erh:viam-streamdeck`), and keys that carry a `name`.
 
 ### Configuration
 
@@ -1369,13 +1362,13 @@ The service only reads a [`viam:sensor-bundle:sensor-monitor`](https://github.co
 
 | Name                    | Type   | Required | Description |
 | ----------------------- | ------ | -------- | ----------- |
-| `monitor_sensor_name`   | string | Yes      | The `sensor-monitor` sensor to read. Its readings supply each count and its `<key>_triggered` flag supplies "due". If it reports `<key>_threshold`, that supplies the limit shown after the slash. |
+| `monitor_sensor_name`   | string | Yes      | The `sensor-monitor` sensor to read. Its readings supply each count and its `<key>_triggered` flag supplies "due". |
 | `usage_sensor_name`     | string | Yes      | The `stateful-sensor` that holds the counters. A button's `refill` command resets its counter here. |
 | `stream_deck_name`      | string | Yes      | The stream deck generic service to update. |
 | `page`                  | string | No       | The stream deck page the buttons are on, for example `"Refill"`. If omitted, whichever page is showing. |
 | `buttons`               | list   | Yes      | At least 1. Each button ties a stream deck key to a counter (below). |
-| `near_percent`          | number | No       | Turns on the warning colour for a counter within this percent of its threshold: `20` means from 80% of the way there (Water 20/25 and up, Beans 16/20 and up). At least 0 and under 100; unset or 0 turns it off. It assumes a counter that counts up toward its limit, as the refill rules do, and it needs the monitor's `<key>_threshold`. |
-| `colors`                | object | No       | Background colours, by CSS colour name (the stream deck module doesn't take hex codes). Defaults: `fresh` green, `ok` teal, `near` salmon, `due` red. |
+| `near_percent`          | number | No       | Turns on the warning color for a counter within this percent of its threshold: `20` means from 80% of the way there (Water 20/25 and up, Beans 16/20 and up). At least 0 and under 100; unset or 0 turns it off. It assumes a counter that counts up toward its limit, as the refill rules do, and it needs the button's `threshold`. |
+| `colors`                | object | No       | Background colors, by CSS color name (the stream deck module doesn't take hex codes): `fresh` for a count of 0, `ok` for a count above 0 with the monitor's rule not firing, `near` for a count within `near_percent` of the threshold, and `due` when the monitor's rule is firing. Defaults: `fresh` green, `ok` teal, `near` salmon, `due` red. |
 | `poll_interval_seconds` | number | No       | How often the monitor is read. Defaults to 2. |
 
 Each button has:
@@ -1385,7 +1378,7 @@ Each button has:
 | `name`    | string | Yes      | The stream deck key's `name`. Unique, and not a number. |
 | `reading` | string | Yes      | The counter's key in the monitor's readings, for example `espresso_cups_used`. |
 | `label`   | string | No       | The short title on the button. Defaults to `name`. |
-| `threshold` | number | No     | The counter's limit, shown after the slash and used for `near_percent`. It repeats the monitor rule's `threshold`, so keep the two in step. If the monitor reports `<key>_threshold`, that value is used instead. Unset or 0 means none. |
+| `threshold` | number | No     | The counter's limit, shown after the slash and used for `near_percent`. It repeats the monitor rule's `threshold`, so keep the two in step. Unset or 0 means none. |
 | `text`    | string | No       | The button text, with `{label}`, `{value}` and `{threshold}` filled in. Defaults to `"{label} {value}/{threshold}"` (for example `Water 12/25`), or just `"{label} {value}"` if there is no threshold. The stream deck wraps text on spaces and shrinks it to fit, so on a small key a label and its count land on two lines. |
 
 ### Example Configuration

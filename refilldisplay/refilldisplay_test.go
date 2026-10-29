@@ -121,8 +121,8 @@ func newTestDisplay(t *testing.T, mon sensor.Sensor, deck resource.Resource, pag
 		deck:    deck,
 		page:    page,
 		buttons: []Button{
-			{Name: "water", Reading: "usage", Label: "Water"},
-			{Name: "beans", Reading: "regular_grinds", Label: "Beans", Text: "{label}: {value} uses"},
+			{Name: "water", Reading: "usage", Label: "Water", Threshold: 25},
+			{Name: "beans", Reading: "regular_grinds", Label: "Beans", Threshold: 20, Text: "{label}: {value} uses"},
 		},
 		colors: Colors{}.withDefaults(),
 		now:    func() time.Time { return clock },
@@ -155,13 +155,13 @@ func TestStateOf(t *testing.T) {
 
 func TestRender(t *testing.T) {
 	colors := Colors{}.withDefaults()
-	b := Button{Name: "water", Reading: "usage", Label: "Water"}
+	b := Button{Name: "water", Reading: "usage", Label: "Water", Threshold: 25}
 
-	p, ok := render(b, map[string]any{"usage": 0.0, "usage_triggered": false, "usage_threshold": 25.0}, colors, 0)
+	p, ok := render(b, map[string]any{"usage": 0.0, "usage_triggered": false}, colors, 0)
 	if !ok || p.Color != "green" || p.Text != "Water 0/25" || p.State != stateFresh {
 		t.Errorf("fresh: got %+v ok=%v", p, ok)
 	}
-	p, _ = render(b, map[string]any{"usage": 4.5, "usage_triggered": false, "usage_threshold": 25.0}, colors, 0)
+	p, _ = render(b, map[string]any{"usage": 4.5, "usage_triggered": false}, colors, 0)
 	if p.Color != "teal" || p.Text != "Water 4.5/25" {
 		t.Errorf("ok: got %+v", p)
 	}
@@ -172,18 +172,18 @@ func TestRender(t *testing.T) {
 
 	// No rule for the reading means no _triggered flag, so it can never be due,
 	// and with no threshold the text shows just the count.
-	p, ok = render(b, map[string]any{"usage": 99.0}, colors, 0)
+	p, ok = render(Button{Name: "water", Reading: "usage", Label: "Water"}, map[string]any{"usage": 99.0}, colors, 0)
 	if !ok || p.Color != "teal" || p.Text != "Water 99" {
 		t.Errorf("no rule: got %+v ok=%v", p, ok)
 	}
 
-	// {threshold} in custom text is "?" when the monitor reports none.
+	// {threshold} in custom text is "?" when the button has none.
 	p, _ = render(Button{Name: "ice", Reading: "ice_dispenses", Text: "{value} of {threshold}"}, map[string]any{"ice_dispenses": 2.0}, colors, 0)
 	if p.Text != "2 of ?" {
 		t.Errorf("unknown threshold: got %q", p.Text)
 	}
 
-	// Name stands in for a missing label, and custom text and colours apply.
+	// Name stands in for a missing label, and custom text and colors apply.
 	p, _ = render(Button{Name: "ice", Reading: "ice_dispenses", Text: "Used {value}x"}, map[string]any{"ice_dispenses": 2.0}, Colors{OK: "teal"}.withDefaults(), 0)
 	if p.Text != "Used 2x" || p.Color != "teal" {
 		t.Errorf("custom: got %+v", p)
@@ -203,34 +203,34 @@ func TestRender(t *testing.T) {
 // display must judge by the count, not the stale flag.
 func TestRenderWhenMonitorIsSnoozed(t *testing.T) {
 	colors := Colors{}.withDefaults()
-	b := Button{Name: "water", Reading: "usage", Label: "Water"}
+	b := Button{Name: "water", Reading: "usage", Label: "Water", Threshold: 25}
 
 	// Refilled on a weekend: the flag is still true from Friday, the count is 0.
-	p, _ := render(b, map[string]any{"usage": 0.0, "usage_triggered": true, "usage_snoozed": true, "usage_threshold": 25.0}, colors, 0)
+	p, _ := render(b, map[string]any{"usage": 0.0, "usage_triggered": true, "usage_snoozed": true}, colors, 0)
 	if p.State != stateFresh || p.Color != "green" {
 		t.Errorf("stale flag after a refill: got %+v, want fresh/green", p)
 	}
 
 	// Ran down overnight: the flag is still false, the count is past the limit.
-	p, _ = render(b, map[string]any{"usage": 26.0, "usage_triggered": false, "usage_snoozed": true, "usage_threshold": 25.0}, colors, 0)
+	p, _ = render(b, map[string]any{"usage": 26.0, "usage_triggered": false, "usage_snoozed": true}, colors, 0)
 	if p.State != stateDue || p.Color != "red" {
 		t.Errorf("past the limit while snoozed: got %+v, want due/red", p)
 	}
 
 	// Within the limit while snoozed.
-	p, _ = render(b, map[string]any{"usage": 10.0, "usage_triggered": true, "usage_snoozed": true, "usage_threshold": 25.0}, colors, 0)
+	p, _ = render(b, map[string]any{"usage": 10.0, "usage_triggered": true, "usage_snoozed": true}, colors, 0)
 	if p.State != stateOK {
 		t.Errorf("within the limit while snoozed: got %+v, want ok", p)
 	}
 
 	// Snoozed with no threshold known: nothing better than the flag.
-	p, _ = render(b, map[string]any{"usage": 0.0, "usage_triggered": true, "usage_snoozed": true}, colors, 0)
+	p, _ = render(Button{Name: "water", Reading: "usage", Label: "Water"}, map[string]any{"usage": 0.0, "usage_triggered": true, "usage_snoozed": true}, colors, 0)
 	if p.State != stateDue {
 		t.Errorf("snoozed without a threshold keeps the flag: got %+v", p)
 	}
 
 	// Not snoozed: the monitor's flag is the authority, as before.
-	p, _ = render(b, map[string]any{"usage": 10.0, "usage_triggered": true, "usage_snoozed": false, "usage_threshold": 25.0}, colors, 0)
+	p, _ = render(b, map[string]any{"usage": 10.0, "usage_triggered": true, "usage_snoozed": false}, colors, 0)
 	if p.State != stateDue {
 		t.Errorf("not snoozed: got %+v, want the flag to win", p)
 	}
@@ -261,9 +261,9 @@ func TestIsNear(t *testing.T) {
 
 func TestRenderNearBand(t *testing.T) {
 	colors := Colors{Near: "lightsalmon"}.withDefaults()
-	b := Button{Name: "water", Reading: "usage", Label: "Water"}
+	b := Button{Name: "water", Reading: "usage", Label: "Water", Threshold: 25}
 	reading := func(v float64, triggered bool) map[string]any {
-		return map[string]any{"usage": v, "usage_triggered": triggered, "usage_threshold": 25.0}
+		return map[string]any{"usage": v, "usage_triggered": triggered}
 	}
 
 	p, _ := render(b, reading(20, false), colors, 20)
@@ -291,57 +291,21 @@ func TestRenderNearBand(t *testing.T) {
 	}
 
 	// No threshold, no warning.
-	p, _ = render(b, map[string]any{"usage": 24.0}, colors, 20)
+	p, _ = render(Button{Name: "water", Reading: "usage", Label: "Water"}, map[string]any{"usage": 24.0}, colors, 20)
 	if p.State != stateOK {
 		t.Errorf("no threshold: got %+v, want ok", p)
 	}
 
 	// While snoozed the count decides, and the band still applies.
-	p, _ = render(b, map[string]any{"usage": 21.0, "usage_triggered": true, "usage_snoozed": true, "usage_threshold": 25.0}, colors, 20)
+	p, _ = render(b, map[string]any{"usage": 21.0, "usage_triggered": true, "usage_snoozed": true}, colors, 20)
 	if p.State != stateNear {
 		t.Errorf("snoozed within the band with a stale flag: got %+v, want near", p)
 	}
 
-	// The default near colour applies if none is configured.
+	// The default near color applies if none is configured.
 	p, _ = render(b, reading(22, false), Colors{}.withDefaults(), 20)
 	if p.Color != "salmon" {
-		t.Errorf("default near colour = %q, want salmon", p.Color)
-	}
-}
-
-// A button's own threshold stands in when the monitor reports none, so the
-// display doesn't need a monitor that reports "<key>_threshold".
-func TestRenderButtonThreshold(t *testing.T) {
-	colors := Colors{}.withDefaults()
-	b := Button{Name: "water", Reading: "usage", Label: "Water", Threshold: 25}
-
-	p, ok := render(b, map[string]any{"usage": 12.0, "usage_triggered": false}, colors, 0)
-	if !ok || p.Text != "Water 12/25" || p.Color != "teal" {
-		t.Errorf("config threshold: got %+v ok=%v, want Water 12/25 teal", p, ok)
-	}
-
-	// The monitor's own threshold wins when it reports one.
-	p, _ = render(b, map[string]any{"usage": 12.0, "usage_threshold": 30.0}, colors, 0)
-	if p.Text != "Water 12/30" {
-		t.Errorf("monitor threshold should win: got %q", p.Text)
-	}
-
-	// The near band uses it: 20 of 25 is within 20%.
-	p, _ = render(b, map[string]any{"usage": 20.0, "usage_triggered": false}, colors, 20)
-	if p.State != stateNear || p.Color != "salmon" {
-		t.Errorf("near band with a config threshold: got %+v, want near/salmon", p)
-	}
-
-	// While snoozed the count is judged against it.
-	p, _ = render(b, map[string]any{"usage": 26.0, "usage_triggered": false, "usage_snoozed": true}, colors, 0)
-	if p.State != stateDue {
-		t.Errorf("snoozed past the config threshold: got %+v, want due", p)
-	}
-
-	// Unset means none, as before.
-	p, _ = render(Button{Name: "water", Reading: "usage", Label: "Water"}, map[string]any{"usage": 12.0}, colors, 0)
-	if p.Text != "Water 12" {
-		t.Errorf("no threshold anywhere: got %q", p.Text)
+		t.Errorf("default near color = %q, want salmon", p.Color)
 	}
 }
 
@@ -386,8 +350,8 @@ func TestValidate(t *testing.T) {
 
 func TestSyncPushesOnlyChanges(t *testing.T) {
 	mon := newFakeMonitor(map[string]any{
-		"usage": 3.0, "usage_triggered": false, "usage_threshold": 25.0,
-		"regular_grinds": 0.0, "regular_grinds_triggered": false, "regular_grinds_threshold": 20.0,
+		"usage": 3.0, "usage_triggered": false,
+		"regular_grinds": 0.0, "regular_grinds_triggered": false,
 	})
 	deck := newFakeDeck()
 	r, _ := newTestDisplay(t, mon, deck, "Refill")
@@ -572,8 +536,8 @@ func TestDoCommandRefresh(t *testing.T) {
 
 func TestRefillResetsCounterAndRepaints(t *testing.T) {
 	mon := newFakeMonitor(map[string]any{
-		"usage": 25.0, "usage_triggered": true, "usage_threshold": 25.0,
-		"regular_grinds": 4.0, "regular_grinds_triggered": false, "regular_grinds_threshold": 20.0,
+		"usage": 25.0, "usage_triggered": true,
+		"regular_grinds": 4.0, "regular_grinds_triggered": false,
 	})
 	deck := newFakeDeck()
 	r, _ := newTestDisplay(t, mon, deck, "Refill")
@@ -583,8 +547,8 @@ func TestRefillResetsCounterAndRepaints(t *testing.T) {
 
 	// The monitor re-checks and sees the reset counter once asked to.
 	mon.set(map[string]any{
-		"usage": 0.0, "usage_triggered": false, "usage_threshold": 25.0,
-		"regular_grinds": 4.0, "regular_grinds_triggered": false, "regular_grinds_threshold": 20.0,
+		"usage": 0.0, "usage_triggered": false,
+		"regular_grinds": 4.0, "regular_grinds_triggered": false,
 	})
 	res, err := r.DoCommand(ctx, map[string]any{"refill": "water"})
 	if err != nil {
