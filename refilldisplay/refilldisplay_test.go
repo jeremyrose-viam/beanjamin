@@ -162,7 +162,7 @@ func TestRender(t *testing.T) {
 		t.Errorf("fresh: got %+v ok=%v", p, ok)
 	}
 	p, _ = render(b, map[string]any{"usage": 4.5, "usage_triggered": false, "usage_threshold": 25.0}, colors, 0)
-	if p.Color != "blue" || p.Text != "Water 4.5/25" {
+	if p.Color != "teal" || p.Text != "Water 4.5/25" {
 		t.Errorf("ok: got %+v", p)
 	}
 	p, _ = render(b, map[string]any{"usage": 25.0, "usage_triggered": true}, colors, 0)
@@ -173,7 +173,7 @@ func TestRender(t *testing.T) {
 	// No rule for the reading means no _triggered flag, so it can never be due,
 	// and with no threshold the text shows just the count.
 	p, ok = render(b, map[string]any{"usage": 99.0}, colors, 0)
-	if !ok || p.Color != "blue" || p.Text != "Water 99" {
+	if !ok || p.Color != "teal" || p.Text != "Water 99" {
 		t.Errorf("no rule: got %+v ok=%v", p, ok)
 	}
 
@@ -371,7 +371,7 @@ func TestSyncPushesOnlyChanges(t *testing.T) {
 	keys := keysOf(t, calls, 0)
 	water := keys["water"].(map[string]any)
 	beans := keys["beans"].(map[string]any)
-	if water["text"] != "Water 3/25" || water["color"] != "blue" {
+	if water["text"] != "Water 3/25" || water["color"] != "teal" {
 		t.Errorf("water = %v", water)
 	}
 	if beans["text"] != "Beans: 0 uses" || beans["color"] != "green" {

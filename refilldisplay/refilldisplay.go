@@ -66,7 +66,7 @@ func (c Colors) withDefaults() Colors {
 		c.Fresh = "green"
 	}
 	if c.OK == "" {
-		c.OK = "blue"
+		c.OK = "teal"
 	}
 	if c.Near == "" {
 		c.Near = "salmon"

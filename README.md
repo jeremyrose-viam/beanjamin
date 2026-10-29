@@ -1342,8 +1342,8 @@ The Refill page on the stream deck is where someone says "I refilled the beans".
 | Colour | Meaning |
 | ------ | ------- |
 | green  | The count is 0, right after a refill. |
-| blue   | The count is above 0 and the monitor's rule is not firing. |
-| orange | Optional (`near_percent`): the count is within that percent of the threshold, but the rule isn't firing yet. |
+| teal   | The count is above 0 and the monitor's rule is not firing. |
+| salmon | Optional (`near_percent`): the count is within that percent of the threshold, but the rule isn't firing yet. |
 | red    | The monitor's rule for the counter is firing (the count has reached its threshold). |
 
 Outside a rule's `active_windows` or during a snooze the monitor freezes the rule, so its `<key>_triggered` flag goes stale (a weekend refill would stay red until Monday). While a rule is snoozed the display judges by the count instead: red when it has reached the reported `<key>_threshold`.
@@ -1375,7 +1375,7 @@ The service only reads a [`viam:sensor-bundle:sensor-monitor`](https://github.co
 | `page`                  | string | No       | The stream deck page the buttons are on, for example `"Refill"`. If omitted, whichever page is showing. |
 | `buttons`               | list   | Yes      | At least 1. Each button ties a stream deck key to a counter (below). |
 | `near_percent`          | number | No       | Turns on the warning colour for a counter within this percent of its threshold: `20` means from 80% of the way there (Water 20/25 and up, Beans 16/20 and up). At least 0 and under 100; unset or 0 turns it off. It assumes a counter that counts up toward its limit, as the refill rules do, and it needs the monitor's `<key>_threshold`. |
-| `colors`                | object | No       | Background colours, by CSS colour name (the stream deck module doesn't take hex codes). Defaults: `fresh` green, `ok` blue, `near` salmon, `due` red. |
+| `colors`                | object | No       | Background colours, by CSS colour name (the stream deck module doesn't take hex codes). Defaults: `fresh` green, `ok` teal, `near` salmon, `due` red. |
 | `poll_interval_seconds` | number | No       | How often the monitor is read. Defaults to 2. |
 
 Each button has:
