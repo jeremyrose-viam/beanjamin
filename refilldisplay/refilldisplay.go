@@ -251,7 +251,8 @@ func (r *refillDisplay) Close(context.Context) error {
 
 func (r *refillDisplay) run(ctx context.Context) {
 	defer close(r.done)
-	r.sync(ctx, false)
+	// sync logs its own failures, so there is nothing more to do with the error.
+	_ = r.sync(ctx, false)
 	t := time.NewTicker(r.every)
 	defer t.Stop()
 	for {
@@ -259,7 +260,7 @@ func (r *refillDisplay) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			r.sync(ctx, false)
+			_ = r.sync(ctx, false)
 		}
 	}
 }
