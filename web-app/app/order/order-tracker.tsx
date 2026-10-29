@@ -14,7 +14,8 @@ import {
   type ViamConnection,
   type QueueOrder,
 } from "../lib/viamClient";
-import { drinkLabel } from "./drinks";
+import { orderLabel } from "./drinks";
+import { DrinkName } from "./drink-name";
 
 // --- Step display rules -------------------------------------------------
 //
@@ -429,7 +430,7 @@ interface OrderCardProps {
 }
 
 function OrderCard({ order, cardClass, statusKind, label }: OrderCardProps) {
-  const drink = drinkLabel(order.drink);
+  const drink = orderLabel(order.drink, order.beans);
   return (
     <div className={cardClass}>
       <div className="flex items-baseline justify-between gap-2">
@@ -445,7 +446,7 @@ function OrderCard({ order, cardClass, statusKind, label }: OrderCardProps) {
       </div>
       {drink && (
         <p className="text-xs font-mono text-neutral-500 mt-0.5">
-          {drink}
+          <DrinkName drink={order.drink} beans={order.beans} />
         </p>
       )}
       {statusKind === "ready" ? (
