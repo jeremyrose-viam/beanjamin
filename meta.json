@@ -52,6 +52,12 @@
       "model": "viam:beanjamin:chore-wheel",
       "short_description": "Posts the weekly maintenance rota to Slack, rotating people through chores.",
       "markdown_link": "README.md#model-viambeanjaminchore-wheel"
+    },
+    {
+      "api": "rdk:service:generic",
+      "model": "viam:beanjamin:refill-display",
+      "short_description": "Keeps the stream deck's Refill page showing live counts, colored by how close each consumable is to a refill.",
+      "markdown_link": "README.md#model-viambeanjaminrefill-display"
     }
   ],
   "entrypoint": "bin/beanjamin",

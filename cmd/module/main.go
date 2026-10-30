@@ -9,6 +9,7 @@ import (
 	"beanjamin/maintenancesensor"
 	"beanjamin/multiposesexecutionswitch"
 	"beanjamin/ordersensor"
+	"beanjamin/refilldisplay"
 
 	"go.viam.com/rdk/components/sensor"
 	toggleswitch "go.viam.com/rdk/components/switch"
@@ -27,5 +28,6 @@ func main() {
 		resource.APIModel{API: generic.API, Model: customerdetector.Model},
 		resource.APIModel{API: generic.API, Model: crm.Model},
 		resource.APIModel{API: generic.API, Model: chorewheel.Model},
+		resource.APIModel{API: generic.API, Model: refilldisplay.Model},
 	)
 }
