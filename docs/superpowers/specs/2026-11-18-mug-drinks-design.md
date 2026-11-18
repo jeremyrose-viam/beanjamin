@@ -266,7 +266,7 @@ Each is an `execute_action` step: `slide_mug_to_water`, `set_mug_at_water`,
   `unlockPortaFilter`) with no cleaning. No grinding, tamping or brewing. Its
   phases: locking portafilter → releasing filter → placing mug at the water →
   adding hot water → serving → grabbing filter → unlocking portafilter →
-  home. Its own progress lines (`step 1/7: locking portafilter`, …) and step
+  home. Its own progress lines (`step 1/8: locking portafilter`, … through `step 8/8`, the home move, planned with the portafilter unlock) and step
   labels, kept in sync per the CLAUDE.md rule; the existing labels are reused
   where the phase is the same.
 - New step label for the Americano's extra phase: "adding hot water", shown
@@ -277,8 +277,19 @@ Each is an `execute_action` step: `slide_mug_to_water`, `set_mug_at_water`,
   the spout; hot water: at the dispenser), the same point at which
   `espresso_cups_used` counts a cup, so a later fault still counts the mug.
   Cup drinks keep counting `espresso_cups_used`; mug drinks do not.
-- A delivery-fulfillment mug order is placed on the shelf, not in the cart,
-  and the cart is told its `cup_type` is "mug".
+- Mug drinks are pickup-only for now: `prepare_order` refuses `fulfillment:
+  "delivery"` for `americano` and `hot_water` ("delivery isn't available for …
+  yet"). (Decided 2026-11-18; the cart needs its own work first. The code
+  still keeps mugs out of the cart and reports `cup_type` "mug" defensively.)
+- Flat moves around a mug (decided 2026-11-18): whenever the open jaws come
+  into or leave a standing mug, the move is straight with no Z change, so a
+  jaw can't catch the handle. The mug approach poses and offsets keep the same
+  Z as their ready/grab counterparts (checked at startup), and after every
+  shelf release, for every drink, the gripper withdraws straight back at the
+  drop height. The delivery cart's vertical lift-out is unchanged.
+- The Americano's top-up (slide, set down, hot water, re-grab) is its own
+  planned stretch before serving, so a serving slot that fails to plan never
+  re-records it.
 - Serving placement (`tryDropCupInSlot`) uses the shared
   `serving_grab_relative_pose` / `serving_approach_relative_pose` and the held
   item's half-height. The mug is taller and may be gripped below mid-height, so
@@ -374,11 +385,11 @@ Once the mug shelf is in place, using `viam robot part motion get-pose`:
    hand: handle clear of the recess, rim under the group head (empty — a
    locked portafilter's spouts not yet checked against the rim);
    `mug_under_machine_approach` = baseline `mug_ready_for_coffee`,
-   `along_orientation` −200, z +4; `mug_ready_for_water` = baseline
+   `along_orientation` −200, z 0 (flat); `mug_ready_for_water` = baseline
    `mug_ready_for_coffee`, y −79.5 (jogged under the hot water outlet with a mug in hand:
    grip point (889, −329.5, 127); the 32 mm first measured was to the edge of the
    portafilter mount, not the outlet's centre); `mug_water_approach` = baseline
-   `mug_ready_for_water`, `along_orientation` −200, z +4.
+   `mug_ready_for_water`, `along_orientation` −200, z 0 (flat).
 7b. Serving: set on Cappuccina 2026-11-18 and checked with a mug in hand on
    serving slot 2 (grip point (200, 786, 339.5), gripper pointing +Y): the mug
    sits flat on the shelf with the handle (pointing −X) clear of slot 1.
