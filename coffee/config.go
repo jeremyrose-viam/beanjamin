@@ -6,6 +6,7 @@ package coffee
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 
@@ -341,6 +342,10 @@ type RelativePose struct {
 	Theta float64 `json:"theta"`
 }
 
+// mugRelativePoseZToleranceMm is how far mug_approach_relative_pose.z may be
+// from mug_grab_relative_pose.z: the move between them must stay level.
+const mugRelativePoseZToleranceMm = 0.5
+
 // relativePoseToSpatial converts a Config RelativePose into a spatialmath.Pose
 // suitable for geom.PoseRelativeTo. Translation is millimeters; orientation is
 // OrientationVectorDegrees.
@@ -654,6 +659,12 @@ func (cfg *Config) Validate(path string) ([]string, []string, error) {
 			"mug_grab_relative_pose", cfg.MugGrabRelativePose,
 		); err != nil {
 			return nil, nil, err
+		}
+		// The approach and the grab must be level with each other: the jaws move
+		// between them open, and any rise or fall could catch the mug's handle.
+		if d := math.Abs(cfg.MugApproachRelativePose.Z - cfg.MugGrabRelativePose.Z); d > mugRelativePoseZToleranceMm {
+			return nil, nil, fmt.Errorf("%s: mug_approach_relative_pose.z (%.1f) must equal mug_grab_relative_pose.z (%.1f) within %.1f mm: the open jaws move straight between them and must not catch the mug's handle",
+				path, cfg.MugApproachRelativePose.Z, cfg.MugGrabRelativePose.Z, mugRelativePoseZToleranceMm)
 		}
 		if err := cfg.MugDimensions.validate(path, "mug_dimensions"); err != nil {
 			return nil, nil, err

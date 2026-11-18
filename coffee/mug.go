@@ -55,13 +55,30 @@ const hotWaterRoutineWired = false
 
 // dispenseHotWater is the hot water routine: a stub until the real one is wired.
 //
-// The contract for the real routine: it keeps the arm for the whole pour (it
-// turns the water on, waits a set time, and turns it off); it receives the drink
-// id so it can tell a top-off (americano, the mug already holds espresso) from a
-// full mug (hot water alone); and it must start and end with the arm clear of
-// the mug, since the mug stands staged at the spout throughout.
+// The contract for the real routine. It runs while the order's moves are being
+// recorded, not executed: the arm is still somewhere behind, working through
+// what was handed off before. So:
+//   - its arm moves must be ordinary steps (executeStep and friends), which
+//     queue in order behind everything already handed off;
+//   - any wait (the pour time) must be a queued move, handOff(ctx, move{name:
+//     ..., sleep: d}), like the brew wait in brew_steps.go, never a sleep here;
+//   - any direct I/O (a board pin, a DoCommand) must go through handOff (as a
+//     move's run) or handOffEffect, so it happens when the arm reaches that
+//     point, not when the planner does;
+//   - or, if it needs each step's result right away, it runs inside
+//     syncRegion(), which waits for the arm to catch up first, at the cost of
+//     planning ahead.
+//
+// It must start and end with the arm clear of the mug, since the mug stands
+// staged at the spout throughout. It receives the drink id so it can tell a
+// top-off (americano, the mug already holds espresso) from a full mug (hot
+// water alone).
 func (s *beanjaminCoffee) dispenseHotWater(ctx, cancelCtx context.Context, drink string) error {
-	s.activeOrderLogger().Warnf("dispense_hot_water: no hot water routine wired yet (drink %s); skipping", drink)
+	logger := s.activeOrderLogger()
+	// Handed off so the warning lands when the arm gets here, once.
+	s.handOffEffect(func() {
+		logger.Warnf("dispense_hot_water: no hot water routine wired yet (drink %s); skipping", drink)
+	})
 	return nil
 }
 

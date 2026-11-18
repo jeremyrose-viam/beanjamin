@@ -42,3 +42,27 @@ func TestEnqueueRejectsMugDrinkWhenOff(t *testing.T) {
 		t.Errorf("queue len = %d, want 1", c.queue.Len())
 	}
 }
+
+func TestEnqueueRejectsDeliveryForMugDrinks(t *testing.T) {
+	for _, drink := range []string{"americano", "hot_water"} {
+		c, _ := newTestCoffee(t, &Config{CanServeMugDrinks: true})
+		_, err := c.enqueueOrder(context.Background(), map[string]any{
+			"drink": drink, "customer_name": "Alice", "customer_email": "alice@example.com", "fulfillment": "delivery",
+		})
+		if err == nil || !strings.Contains(err.Error(), "delivery isn't available for") {
+			t.Fatalf("%s delivery: error = %v, want a delivery rejection", drink, err)
+		}
+		if c.queue.Len() != 0 {
+			t.Errorf("%s delivery: queue len = %d, want 0", drink, c.queue.Len())
+		}
+
+		if _, err := c.enqueueOrder(context.Background(), map[string]any{
+			"drink": drink, "customer_name": "Alice", "fulfillment": "pickup",
+		}); err != nil {
+			t.Fatalf("%s pickup: %v", drink, err)
+		}
+		if c.queue.Len() != 1 {
+			t.Errorf("%s pickup: queue len = %d, want 1", drink, c.queue.Len())
+		}
+	}
+}

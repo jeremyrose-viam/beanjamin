@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 
+	"go.viam.com/rdk/logging"
+
 	"beanjamin/coffee/order"
 )
 
@@ -25,21 +27,24 @@ type phaseSpec struct{ step, span, progress, chunk string }
 // hotWaterPhases is the hot water drink's routine. The gripper holds the
 // portafilter between orders, so it locks the empty portafilter into the group
 // head and lets go before it can pick up a mug, then takes it back at the end.
-// No grinding, tamping, brewing or cleaning.
+// No grinding, tamping, brewing or cleaning. The move home is the last phase,
+// planned with the unlock as prepareDrink plans its own.
 func hotWaterPhases() []phaseSpec {
 	return []phaseSpec{
-		{stepLockingPortafilter, spanLockingPortafilter, "step 1/7: locking empty portafilter", chunkPreparePortafilter},
-		{stepReleasingFilter, spanReleasingFilter, "step 2/7: releasing filter", chunkPreparePortafilter},
-		{stepPlacingMug, spanPlacingMugAtWater, "step 3/7: placing mug at the hot water", ""},
-		{stepAddingHotWater, spanAddingHotWater, "step 4/7: adding hot water", ""},
-		{stepServing, spanServing, "step 5/7: serving mug", ""},
-		{stepGrabbingFilter, spanGrabbingFilter, "step 6/7: grabbing filter", chunkRetrievePortafilter},
-		{stepUnlockingPortafilter, spanUnlockingPortafilter, "step 7/7: unlocking portafilter", chunkRetrievePortafilter},
+		{stepLockingPortafilter, spanLockingPortafilter, "step 1/8: locking empty portafilter", chunkPreparePortafilter},
+		{stepReleasingFilter, spanReleasingFilter, "step 2/8: releasing filter", chunkPreparePortafilter},
+		{stepPlacingMug, spanPlacingMugAtWater, "step 3/8: placing mug at the hot water", ""},
+		{stepAddingHotWater, spanAddingHotWater, "step 4/8: adding hot water", ""},
+		{stepServing, spanServing, "step 5/8: serving mug", ""},
+		{stepGrabbingFilter, spanGrabbingFilter, "step 6/8: grabbing filter", chunkRetrievePortafilter},
+		{stepUnlockingPortafilter, spanUnlockingPortafilter, "step 7/8: unlocking portafilter", chunkRetrievePortafilter},
+		{stepFinishingUp, spanMovingHome, "step 8/8: moving to home pose", chunkRetrievePortafilter},
 	}
 }
 
 // Chunks the hot water phases are planned in: the lock pivot with the release
-// after it, and the re-grab with the unlock pivot, as prepareDrink plans them.
+// after it, and the re-grab with the unlock pivot and the move home, as
+// prepareDrink plans them.
 const (
 	chunkPreparePortafilter  = "prepare portafilter"
 	chunkRetrievePortafilter = "retrieve portafilter"
@@ -55,6 +60,7 @@ const (
 	spanServing              = "serving"
 	spanGrabbingFilter       = "grabbing_filter"
 	spanUnlockingPortafilter = "unlocking_portafilter"
+	spanMovingHome           = "moving_home"
 )
 
 // hotWaterRoutines binds each hot water phase span to its routine. servedSlot
@@ -73,11 +79,14 @@ func (s *beanjaminCoffee) hotWaterRoutines(o order.Order, servedSlot *int) map[s
 		},
 		spanGrabbingFilter:       s.grabFilter,
 		spanUnlockingPortafilter: s.unlockPortaFilter,
+		spanMovingHome: func(ctx, cancelCtx context.Context) error {
+			return s.executeStep(ctx, cancelCtx, Step{PoseName: filterPoseHome, PoseSwitch: s.filterSw})
+		},
 	}
 }
 
 // prepareHotWater runs the hot water drink: the phases of hotWaterPhases, each
-// bound to its routine by span, then the home move. Called from prepareDrink
+// bound to its routine by span, ending with the home move. Called from prepareDrink
 // after its shared setup, so the same defers (failed-step capture, pause on
 // fault, flow end) cover it. A mug drink always goes to the shelf, never the
 // delivery cart.
@@ -133,12 +142,6 @@ func (s *beanjaminCoffee) prepareHotWater(ctx, cancelCtx context.Context, o orde
 		}
 		i = j
 	}
-
-	s.setStep(stepFinishingUp)
-	logger.Infof("post: moving to home pose")
-	if err := s.executeStep(ctx, cancelCtx, Step{PoseName: filterPoseHome, PoseSwitch: s.filterSw}); err != nil {
-		return err
-	}
 	logger.Infof("%s preparation complete", drink)
 	return nil
 }
@@ -146,35 +149,51 @@ func (s *beanjaminCoffee) prepareHotWater(ctx, cancelCtx context.Context, o orde
 // serveAmericano finishes an Americano once the lungo has poured into the mug
 // under the group head: grasp the mug (approaching it first unless the arm
 // already lined up during the pour), slide it to the hot water spout, set it
-// down, top it up with hot water, pick it back up, and hand it to placeDrink
-// to set down. Returns where placeDrink put it.
+// down, top it up with hot water, and pick it back up — one chunk of its own,
+// the top-up stretch — then hand the held mug to placeDrink to set down.
+// Returns where placeDrink put it.
+//
+// The top-up runs before the placement rather than as its grab, so a slot that
+// fails to plan only re-records the placement, never the top-up.
 func (s *beanjaminCoffee) serveAmericano(ctx, cancelCtx context.Context, approached bool, placeDrink servePlacement) (int, error) {
 	logger := s.activeOrderLogger()
-	mug := s.mugVessel()
-	topUp := func(ctx, cancelCtx context.Context) error {
-		if !approached {
-			if err := s.approachBrewedVessel(ctx, cancelCtx, mug); err != nil {
-				return err
-			}
-		}
-		if err := s.graspBrewedInPlace(ctx, cancelCtx, mug); err != nil {
-			return err
-		}
-		if err := s.slideMugToWater(ctx, cancelCtx); err != nil {
-			return err
-		}
-		if err := s.setMugAtWater(ctx, cancelCtx); err != nil {
-			return err
-		}
-		s.setStep(stepAddingHotWater)
-		logger.Info("step 6c/9: adding hot water")
-		if err := s.dispenseHotWater(ctx, cancelCtx, "americano"); err != nil {
-			return err
-		}
-		s.setStep(stepServing)
-		return s.regrabMugAtWater(ctx, cancelCtx)
+	if err := s.inChunk(chunkAmericanoTopUp, func() error {
+		return s.topUpAmericano(ctx, cancelCtx, approached, logger)
+	}); err != nil {
+		return -1, err
 	}
-	return placeDrink(ctx, cancelCtx, topUp)
+	s.setStep(stepServing)
+	// The mug is already in the gripper: no grab.
+	return placeDrink(ctx, cancelCtx, nil)
+}
+
+// chunkAmericanoTopUp is the chunk the Americano's top-up is planned in.
+const chunkAmericanoTopUp = "top up americano"
+
+// topUpAmericano is serveAmericano's top-up stretch: it ends with the topped-up
+// mug in the gripper, clear of the spout.
+func (s *beanjaminCoffee) topUpAmericano(ctx, cancelCtx context.Context, approached bool, logger logging.Logger) error {
+	mug := s.mugVessel()
+	if !approached {
+		if err := s.approachBrewedVessel(ctx, cancelCtx, mug); err != nil {
+			return err
+		}
+	}
+	if err := s.graspBrewedInPlace(ctx, cancelCtx, mug); err != nil {
+		return err
+	}
+	if err := s.slideMugToWater(ctx, cancelCtx); err != nil {
+		return err
+	}
+	if err := s.setMugAtWater(ctx, cancelCtx); err != nil {
+		return err
+	}
+	s.setStep(stepAddingHotWater)
+	s.handOffEffect(func() { logger.Info("step 6c/9: adding hot water") })
+	if err := s.dispenseHotWater(ctx, cancelCtx, "americano"); err != nil {
+		return err
+	}
+	return s.regrabMugAtWater(ctx, cancelCtx)
 }
 
 // serveHotWater is the serve_hot_water action: the hot water drink's mug

@@ -273,6 +273,9 @@ func (s *beanjaminCoffee) validateConfiguredPoses(ctx context.Context) error {
 		}
 	}
 	if s.cfg.CanServeMugDrinks {
+		if err := s.validateMugPosesLevel(ctx); err != nil {
+			return fmt.Errorf("pose validation: %w", err)
+		}
 		coffee, err := s.fetchPose(ctx, s.clawsSw, clawPoseMugReadyForCoffee)
 		if err != nil {
 			return fmt.Errorf("pose validation: required pose %q: %w", clawPoseMugReadyForCoffee, err)
@@ -287,6 +290,52 @@ func (s *beanjaminCoffee) validateConfiguredPoses(ctx context.Context) error {
 		}
 	}
 	s.logger.Infof("pose validation: %d configured pose(s) resolved and non-zero", len(poses))
+	return nil
+}
+
+// mugPoseZToleranceMm is how far a mug approach pose may sit above or below
+// its ready pose: the open jaws move straight between them, and a rise or fall
+// could catch the mug's handle.
+const mugPoseZToleranceMm = 1.0
+
+// mugLevelPairs are the mug approach poses and the ready pose each one must
+// stay level with.
+var mugLevelPairs = [][2]string{
+	{clawPoseMugUnderMachineApproach, clawPoseMugReadyForCoffee},
+	{clawPoseMugWaterApproach, clawPoseMugReadyForWater},
+}
+
+// validateMugPosesLevel checks that each mug approach pose is at the same
+// height as its ready pose (mugLevelPairs).
+func (s *beanjaminCoffee) validateMugPosesLevel(ctx context.Context) error {
+	for _, pair := range mugLevelPairs {
+		approach, err := s.fetchPose(ctx, s.clawsSw, pair[0])
+		if err != nil {
+			return fmt.Errorf("required pose %q: %w", pair[0], err)
+		}
+		ready, err := s.fetchPose(ctx, s.clawsSw, pair[1])
+		if err != nil {
+			return fmt.Errorf("required pose %q: %w", pair[1], err)
+		}
+		if err := mugPosesLevel(pair[0], approach, pair[1], ready); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mugPosesLevel reports an error when approach and ready differ in Z by more
+// than mugPoseZToleranceMm.
+func mugPosesLevel(approachName string, approach *poseData, readyName string, ready *poseData) error {
+	if approach.refFrame != ready.refFrame {
+		return fmt.Errorf("%q is in frame %q but %q is in %q; they must share a frame to be checked level",
+			approachName, approach.refFrame, readyName, ready.refFrame)
+	}
+	az, rz := approach.pose.Point().Z, ready.pose.Point().Z
+	if d := math.Abs(az - rz); d > mugPoseZToleranceMm {
+		return fmt.Errorf("%q (z=%.1f) and %q (z=%.1f) differ in height by %.1f mm (tolerance %.0f); the open jaws move straight between them and must stay level so they cannot catch the mug's handle",
+			approachName, az, readyName, rz, d, mugPoseZToleranceMm)
+	}
 	return nil
 }
 

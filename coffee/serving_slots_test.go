@@ -178,3 +178,33 @@ func TestDropZOffsetForMug(t *testing.T) {
 		t.Fatalf("mug drop offset = %g, want the held half-height 40", got)
 	}
 }
+
+// After the release the gripper withdraws straight back, level: the withdraw
+// pose is the approach pose's X/Y at the drop pose's Z and orientation, for the
+// shared serving offsets and the mug's alike.
+func TestSlotWithdrawPoseIsLevelWithTheDrop(t *testing.T) {
+	anchor := r3.Vector{X: 400, Y: -250, Z: 120}
+	for _, label := range []string{"cup", pickupLabelMug} {
+		s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+		s.cfg.ServingGrabRelativePose = &RelativePose{X: -10, Z: 5, OZ: 1}
+		s.cfg.ServingApproachRelativePose = &RelativePose{X: -186, Y: 3, Z: 26, OZ: 1}
+		s.cfg.MugServingGrabRelativePose = &RelativePose{X: -20, Z: 8, OX: 1, Theta: 15}
+		s.cfg.MugServingApproachRelativePose = &RelativePose{X: -196, Y: -4, Z: 40, OX: 1, Theta: 15}
+		holdLabelled(t, s, label)
+		grab, approach := s.servingOffsets()
+		dropPose, approachPose, withdrawPose := slotPlacementPoses(anchor, grab, approach)
+		w, d, a := withdrawPose.Point(), dropPose.Point(), approachPose.Point()
+		if math.Abs(w.Z-d.Z) > 1e-9 {
+			t.Errorf("%s: withdraw z = %.3f, want the drop z %.3f", label, w.Z, d.Z)
+		}
+		if math.Abs(w.X-a.X) > 1e-9 || math.Abs(w.Y-a.Y) > 1e-9 {
+			t.Errorf("%s: withdraw x/y = %.3f/%.3f, want the approach x/y %.3f/%.3f", label, w.X, w.Y, a.X, a.Y)
+		}
+		if !spatialmath.OrientationAlmostEqual(withdrawPose.Orientation(), dropPose.Orientation()) {
+			t.Errorf("%s: withdraw orientation %v, want the drop orientation %v", label, withdrawPose.Orientation(), dropPose.Orientation())
+		}
+		if math.Abs(a.Z-d.Z) < 1 {
+			t.Fatalf("%s: test offsets should put the approach above the drop", label)
+		}
+	}
+}

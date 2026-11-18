@@ -93,3 +93,17 @@ func TestHandleDimensionsValidate(t *testing.T) {
 		t.Errorf("valid dims: %v", err)
 	}
 }
+
+func TestValidateMugApproachLevelWithGrab(t *testing.T) {
+	cfg := validMugDrinksConfig()
+	cfg.MugGrabRelativePose = &RelativePose{X: -10, Z: 12}
+	cfg.MugApproachRelativePose = &RelativePose{X: -120, Z: 12.4}
+	if _, _, err := cfg.Validate("path"); err != nil {
+		t.Fatalf("approach within 0.5 mm of the grab: %v", err)
+	}
+	cfg.MugApproachRelativePose = &RelativePose{X: -120, Z: 30}
+	_, _, err := cfg.Validate("path")
+	if err == nil || !strings.Contains(err.Error(), "mug_approach_relative_pose.z") || !strings.Contains(err.Error(), "mug_grab_relative_pose.z") {
+		t.Fatalf("want an error naming both z fields, got %v", err)
+	}
+}

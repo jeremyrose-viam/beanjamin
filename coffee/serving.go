@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/spatialmath"
 
 	"beanjamin/coffee/geom"
 )
@@ -168,7 +169,8 @@ func (s *beanjaminCoffee) placeHeldInArea(ctx, cancelCtx context.Context, area p
 // approach pose above the slot, descend linearly to the drop pose (placement
 // anchor = shelfTopZ + servingAreaDropZOffset, i.e. the held container's
 // half-height, so its bottom rests on the shelf regardless of its height),
-// release, then retreat linearly and close the gripper.
+// release, then withdraw linearly straight back at the drop height (no change
+// in Z, see slotPlacementPoses) and close the gripper.
 //
 // ServingGrabRelativePose is the grip-point-to-container offset used at release
 // (composed onto the placement anchor here) — shared by the hot cup and the
@@ -199,11 +201,11 @@ func (s *beanjaminCoffee) tryDropCupInSlot(ctx, cancelCtx context.Context, area 
 		Z: shelfTopZ + s.servingAreaDropZOffset(),
 	}
 	grabOffset, approachOffset := s.servingOffsets()
-	dropPose := geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(grabOffset))
-	approachPose := geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(approachOffset))
+	dropPose, approachPose, withdrawPose := slotPlacementPoses(dropAnchor, grabOffset, approachOffset)
 
 	approachPD := &poseData{pose: approachPose, refFrame: referenceframe.World, componentName: gripPoint}
 	dropPD := &poseData{pose: dropPose, refFrame: referenceframe.World, componentName: gripPoint}
+	withdrawPD := &poseData{pose: withdrawPose, refFrame: referenceframe.World, componentName: gripPoint}
 	logger.Infof("shelf placement: slot (x=%.1f, y=%.1f) drop_pose=%v approach_pose=%v",
 		tileWorld.X, tileWorld.Y, dropPose, approachPose)
 
@@ -246,12 +248,15 @@ func (s *beanjaminCoffee) tryDropCupInSlot(ctx, cancelCtx context.Context, area 
 	// Cup is released onto the shelf; it no longer travels with the gripper.
 	s.detachHeldGeometry()
 
-	// 4. Linear retreat back to the approach pose. The cup is released, but the
-	// gripper/claws start inside the area's shield, so the shield must stay
-	// allowed for the straight-up retreat to plan out of the slot (the held-item
-	// pair drops out now that nothing is attached). Nothing is held, so the arm's
-	// default speed.
-	if err := s.moveToRawPose(ctx, approachPD, defaultApproachConstraint, s.areaShieldCollisions(area.shieldFrame), nil); err != nil {
+	// 4. Withdraw straight back, level, to the withdraw pose: the approach pose's
+	// X/Y at the drop pose's height. The jaws stay at the height they opened at,
+	// so they cannot catch a mug's handle on the way out. No move up to the
+	// approach pose follows: the next free move plans from here. The cup is
+	// released, but the gripper/claws start inside the area's shield, so the
+	// shield must stay allowed for the withdrawal to plan out of the slot (the
+	// held-item pair drops out now that nothing is attached). Nothing is held,
+	// so the arm's default speed.
+	if err := s.moveToRawPose(ctx, withdrawPD, defaultApproachConstraint, s.areaShieldCollisions(area.shieldFrame), nil); err != nil {
 		return fmt.Errorf("retreat after releasing cup (slot x=%.1f, y=%.1f): %v", tileWorld.X, tileWorld.Y, err)
 	}
 
@@ -260,4 +265,18 @@ func (s *beanjaminCoffee) tryDropCupInSlot(ctx, cancelCtx context.Context, area 
 		return fmt.Errorf("close gripper after release: %w", err)
 	}
 	return nil
+}
+
+// slotPlacementPoses composes the serving offsets onto a slot's drop anchor:
+// the drop pose (grab offset), the approach pose (approach offset) and the
+// withdraw pose the gripper backs out to after the release. The withdraw pose
+// keeps the approach pose's X/Y but the drop pose's Z and orientation, so the
+// withdrawal is a straight, level move back: open jaws rising out of the slot
+// could catch a mug's handle.
+func slotPlacementPoses(dropAnchor r3.Vector, grabOffset, approachOffset *RelativePose) (drop, approach, withdraw spatialmath.Pose) {
+	drop = geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(grabOffset))
+	approach = geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(approachOffset))
+	at := approach.Point()
+	withdraw = spatialmath.NewPose(r3.Vector{X: at.X, Y: at.Y, Z: drop.Point().Z}, drop.Orientation())
+	return drop, approach, withdraw
 }

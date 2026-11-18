@@ -85,6 +85,13 @@ func (s *beanjaminCoffee) enqueueOrder(ctx context.Context, orderRaw any) (map[s
 		s.logger.Warnf("rejected order: %v", err)
 		return nil, err
 	}
+	// A mug drink is served on the shelf only for now: the cart's slots are
+	// sized for cups, not mugs.
+	if fulfillment == order.FulfillmentDelivery && order.IsMug(drink) {
+		err := fmt.Errorf("delivery isn't available for %s yet", label)
+		s.logger.Warnf("rejected order: %v", err)
+		return nil, err
+	}
 	if fulfillment == order.FulfillmentDelivery {
 		if ok, reason := s.deliveryAvailability(); !ok {
 			err := fmt.Errorf("delivery orders are not being accepted: %s", reason)

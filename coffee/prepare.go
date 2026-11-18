@@ -189,7 +189,8 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 	var servedSlot int
 	inCart := false
 	// placeDrink grabs the filled drink and sets it down: in the docked cart for
-	// a delivery order when cart placement is configured, else on the shelf.
+	// a delivery order when cart placement is configured, else on the shelf. A
+	// nil grab means the drink is already held.
 	placeDrink := func(ctx, cancelCtx context.Context, grab grabDrink) (int, error) {
 		if toCart && !cartLocated {
 			if err := locateCart(ctx, cancelCtx); err != nil {
@@ -197,8 +198,10 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 			}
 		}
 		if cartSlotFound {
-			if err := grab(ctx, cancelCtx); err != nil {
-				return -1, err
+			if grab != nil {
+				if err := grab(ctx, cancelCtx); err != nil {
+					return -1, err
+				}
 			}
 			// The cart learns the drink is in once the gripper has really let go of
 			// it, even if the retreat after fails.

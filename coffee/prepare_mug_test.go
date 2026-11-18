@@ -13,7 +13,7 @@ func TestHotWaterPhases(t *testing.T) {
 	phases := hotWaterPhases()
 	wantSteps := []string{
 		stepLockingPortafilter, stepReleasingFilter, stepPlacingMug, stepAddingHotWater,
-		stepServing, stepGrabbingFilter, stepUnlockingPortafilter,
+		stepServing, stepGrabbingFilter, stepUnlockingPortafilter, stepFinishingUp,
 	}
 	if len(phases) != len(wantSteps) {
 		t.Fatalf("hotWaterPhases() has %d phases, want %d", len(phases), len(wantSteps))
@@ -23,7 +23,7 @@ func TestHotWaterPhases(t *testing.T) {
 		if p.step != wantSteps[i] {
 			t.Errorf("phase %d step = %q, want %q", i+1, p.step, wantSteps[i])
 		}
-		if prefix := fmt.Sprintf("step %d/7: ", i+1); !strings.HasPrefix(p.progress, prefix) {
+		if prefix := fmt.Sprintf("step %d/8: ", i+1); !strings.HasPrefix(p.progress, prefix) {
 			t.Errorf("phase %d progress = %q, want prefix %q", i+1, p.progress, prefix)
 		}
 		switch p.step {
@@ -68,15 +68,21 @@ func TestHotWaterRoutinesCoverPhases(t *testing.T) {
 }
 
 // The hot water drink plans its portafilter phases in the chunks prepareDrink
-// uses for them: the lock with the release, the re-grab with the unlock.
+// uses for them: the lock with the release, the re-grab with the unlock and
+// the move home.
 func TestHotWaterPhaseChunks(t *testing.T) {
 	want := map[string]string{
 		stepLockingPortafilter:   chunkPreparePortafilter,
 		stepReleasingFilter:      chunkPreparePortafilter,
 		stepGrabbingFilter:       chunkRetrievePortafilter,
 		stepUnlockingPortafilter: chunkRetrievePortafilter,
+		stepFinishingUp:          chunkRetrievePortafilter,
 	}
-	for _, p := range hotWaterPhases() {
+	phases := hotWaterPhases()
+	if last := phases[len(phases)-1]; last.step != stepFinishingUp || last.progress != "step 8/8: moving to home pose" {
+		t.Errorf("last phase = %q / %q, want the move home", last.step, last.progress)
+	}
+	for _, p := range phases {
 		if p.chunk != want[p.step] {
 			t.Errorf("phase %q chunk = %q, want %q", p.step, p.chunk, want[p.step])
 		}

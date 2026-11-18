@@ -2,6 +2,7 @@ package coffee
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -136,5 +137,33 @@ func TestMugReadyYawMismatchDeg(t *testing.T) {
 		if got := mugReadyYawMismatchDeg(heading(tc.a), heading(tc.b)); math.Abs(got-tc.want) > 1e-6 {
 			t.Errorf("mismatch(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
+	}
+}
+
+func TestMugPosesLevel(t *testing.T) {
+	at := func(z float64, frame string) *poseData {
+		return &poseData{pose: spatialmath.NewPoseFromPoint(r3.Vector{X: 100, Y: 50, Z: z}), refFrame: frame}
+	}
+	if err := mugPosesLevel(clawPoseMugWaterApproach, at(200.8, "world"), clawPoseMugReadyForWater, at(200, "world")); err != nil {
+		t.Errorf("within 1 mm: %v", err)
+	}
+	err := mugPosesLevel(clawPoseMugUnderMachineApproach, at(221, "world"), clawPoseMugReadyForCoffee, at(200, "world"))
+	if err == nil {
+		t.Fatal("21 mm apart: want an error")
+	}
+	for _, want := range []string{clawPoseMugUnderMachineApproach, clawPoseMugReadyForCoffee, "21.0 mm"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+	if err := mugPosesLevel(clawPoseMugWaterApproach, at(200, "a"), clawPoseMugReadyForWater, at(200, "b")); err == nil {
+		t.Error("different frames: want an error")
+	}
+	pairs := map[string]string{}
+	for _, p := range mugLevelPairs {
+		pairs[p[0]] = p[1]
+	}
+	if pairs[clawPoseMugUnderMachineApproach] != clawPoseMugReadyForCoffee || pairs[clawPoseMugWaterApproach] != clawPoseMugReadyForWater {
+		t.Errorf("mugLevelPairs = %v", mugLevelPairs)
 	}
 }
