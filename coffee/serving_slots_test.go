@@ -1,9 +1,11 @@
 package coffee
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -206,5 +208,55 @@ func TestSlotWithdrawPoseIsLevelWithTheDrop(t *testing.T) {
 		if math.Abs(a.Z-d.Z) < 1 {
 			t.Fatalf("%s: test offsets should put the approach above the drop", label)
 		}
+	}
+}
+
+// The withdrawal must end outside the area's shield: a withdraw point inside it
+// is refused (and not as a planning failure, so no other slot is tried), one
+// outside it or with no shield in the frame system passes.
+func TestWithdrawPointMustBeOutsideTheShield(t *testing.T) {
+	// A 200 x 200 x 100 mm shield centred at (500, 0, 150), turned 30 degrees
+	// about Z so the check has to respect its pose.
+	shieldPose := spatialmath.NewPose(r3.Vector{X: 500, Y: 0, Z: 150}, &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 30})
+	// The pose rides on the geometry, as the frame system's world-anchored
+	// obstacles carry theirs.
+	box, err := spatialmath.NewBox(shieldPose, r3.Vector{X: 200, Y: 200, Z: 100}, servingAreaShieldFrameName)
+	if err != nil {
+		t.Fatalf("new box: %v", err)
+	}
+	fs := clawsStaticFS(t, spatialmath.NewZeroPose())
+	shield, err := referenceframe.NewStaticFrameWithGeometry(servingAreaShieldFrameName, spatialmath.NewZeroPose(), box)
+	if err != nil {
+		t.Fatalf("new shield frame: %v", err)
+	}
+	if err := fs.AddFrame(shield, fs.World()); err != nil {
+		t.Fatalf("add shield frame: %v", err)
+	}
+	s := heldGeomService(t, fs)
+	area := s.servingArea()
+
+	err = s.checkWithdrawOutsideShield(area, r3.Vector{X: 560, Y: 20, Z: 130})
+	if err == nil {
+		t.Fatal("withdraw point inside the shield: want an error")
+	}
+	if errors.Is(err, errMotionPlanning) {
+		t.Errorf("error %v must not be a planning failure", err)
+	}
+	for _, want := range []string{servingAreaFrameName, servingAreaShieldFrameName, "x=560.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+	// Inside the shield's axis-aligned extent but outside the turned box.
+	if err := s.checkWithdrawOutsideShield(area, r3.Vector{X: 595, Y: 95, Z: 150}); err != nil {
+		t.Errorf("withdraw point outside the turned shield: %v", err)
+	}
+	// Below the shield.
+	if err := s.checkWithdrawOutsideShield(area, r3.Vector{X: 500, Y: 0, Z: 90}); err != nil {
+		t.Errorf("withdraw point below the shield: %v", err)
+	}
+	// No dirty-container shield in this frame system.
+	if err := s.checkWithdrawOutsideShield(s.dirtyContainerArea(), r3.Vector{X: 500, Y: 0, Z: 150}); err != nil {
+		t.Errorf("no shield frame: %v", err)
 	}
 }

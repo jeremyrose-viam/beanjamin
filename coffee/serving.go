@@ -206,8 +206,18 @@ func (s *beanjaminCoffee) tryDropCupInSlot(ctx, cancelCtx context.Context, area 
 	approachPD := &poseData{pose: approachPose, refFrame: referenceframe.World, componentName: gripPoint}
 	dropPD := &poseData{pose: dropPose, refFrame: referenceframe.World, componentName: gripPoint}
 	withdrawPD := &poseData{pose: withdrawPose, refFrame: referenceframe.World, componentName: gripPoint}
-	logger.Infof("shelf placement: slot (x=%.1f, y=%.1f) drop_pose=%v approach_pose=%v",
-		tileWorld.X, tileWorld.Y, dropPose, approachPose)
+	logger.Infof("shelf placement: slot (x=%.1f, y=%.1f) drop_pose=%v approach_pose=%v withdraw_pose=%v",
+		tileWorld.X, tileWorld.Y, dropPose, approachPose, withdrawPose)
+
+	// The withdrawal ends at the drop height. If that is still inside the area's
+	// shield, the next move would start in collision with it, and the planner
+	// ignores a pair already in collision at a move's start for the whole move:
+	// it could sweep sideways through the standing containers. Refuse before
+	// anything moves. Not a planning failure: every slot shares the offsets, so
+	// trying the next one would not help.
+	if err := s.checkWithdrawOutsideShield(area, withdrawPose.Point()); err != nil {
+		return err
+	}
 
 	// 1. Carry the held cup to the approach pose above the slot. A *filled*
 	// container is carried with its orientation held near level (carryHeldLevel)
@@ -257,7 +267,7 @@ func (s *beanjaminCoffee) tryDropCupInSlot(ctx, cancelCtx context.Context, area 
 	// held-item pair drops out now that nothing is attached). Nothing is held,
 	// so the arm's default speed.
 	if err := s.moveToRawPose(ctx, withdrawPD, defaultApproachConstraint, s.areaShieldCollisions(area.shieldFrame), nil); err != nil {
-		return fmt.Errorf("retreat after releasing cup (slot x=%.1f, y=%.1f): %v", tileWorld.X, tileWorld.Y, err)
+		return fmt.Errorf("withdraw after releasing cup (slot x=%.1f, y=%.1f): %v", tileWorld.X, tileWorld.Y, err)
 	}
 
 	// 5. Close the gripper for the next move.
@@ -279,4 +289,42 @@ func slotPlacementPoses(dropAnchor r3.Vector, grabOffset, approachOffset *Relati
 	at := approach.Point()
 	withdraw = spatialmath.NewPose(r3.Vector{X: at.X, Y: at.Y, Z: drop.Point().Z}, drop.Orientation())
 	return drop, approach, withdraw
+}
+
+// checkWithdrawOutsideShield returns an error when the withdraw grip point lies
+// inside the area's shield. A frame system without the shield passes.
+func (s *beanjaminCoffee) checkWithdrawOutsideShield(area placementArea, withdraw r3.Vector) error {
+	if area.shieldFrame == "" {
+		return nil
+	}
+	sc := s.scene()
+	fs := sc.fs
+	inputs := placement{inputs: sc.inputs}.fullInputs(fs).ToLinearInputs()
+	pt := spatialmath.NewPoint(withdraw, "")
+	for _, name := range []string{area.shieldFrame, area.shieldFrame + "_origin"} {
+		frame := fs.Frame(name)
+		if frame == nil {
+			continue
+		}
+		gif, err := frame.Geometries([]referenceframe.Input{})
+		if err != nil || len(gif.Geometries()) == 0 {
+			continue
+		}
+		tf, err := fs.Transform(inputs, gif, referenceframe.World)
+		if err != nil {
+			return fmt.Errorf("place_in_%s: locate shield %q: %w", area.frame, name, err)
+		}
+		for _, g := range tf.(*referenceframe.GeometriesInFrame).Geometries() {
+			inside, _, err := g.CollidesWith(pt, 0)
+			if err != nil {
+				return fmt.Errorf("place_in_%s: check withdraw point against shield %q: %w", area.frame, name, err)
+			}
+			if inside {
+				return fmt.Errorf("place_in_%s: withdraw point (x=%.1f, y=%.1f, z=%.1f) is inside the shield %q; "+
+					"the approach offset's x/y at the drop height must lie outside it, or the next move would ignore the shield",
+					area.frame, withdraw.X, withdraw.Y, withdraw.Z, area.shieldFrame)
+			}
+		}
+	}
+	return nil
 }
