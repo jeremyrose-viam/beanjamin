@@ -1,9 +1,7 @@
 package coffee
 
 import (
-	"context"
 	"math"
-	"strings"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -56,28 +54,6 @@ func TestHeldGeometriesMugAddsHandle(t *testing.T) {
 	}
 	h := got[1].Pose().Point()
 	if math.Abs(h.X-100) > 1e-6 || math.Abs(h.Y-(200+59.5)) > 1e-6 {
-		t.Errorf("handle centre = %+v, want X=100, Y=%v", h, 200+59.5)
-	}
-}
-
-func TestMugPickupTargetFields(t *testing.T) {
-	s, _ := newTestCoffee(t, nil)
-	tg := s.mugPickupTarget()
-	if tg.label != pickupLabelMug || tg.observeHomePose != mugPoseObserve || tg.shieldFrame != cleanMugAreaShieldFrameName {
-		t.Errorf("unexpected target: %+v", tg)
-	}
-	if want := "I don't see a mug yet — please place one on the mug shelf. Trying again in 15 seconds."; tg.noItemSpeak != want {
-		t.Errorf("noItemSpeak = %q", tg.noItemSpeak)
-	}
-	if want := "I can see a mug but I'm having trouble grabbing it — could you nudge it a little? Trying again in 15 seconds."; tg.unreachableSpeak != want {
-		t.Errorf("unreachableSpeak = %q", tg.unreachableSpeak)
-	}
-}
-
-func TestPickMugRequiresMugDrinks(t *testing.T) {
-	s, _ := newTestCoffee(t, nil)
-	err := s.actionFuncs()["pick_mug"](context.Background(), context.Background())
-	if err == nil || !strings.Contains(err.Error(), "can_serve_mug_drinks") {
-		t.Fatalf("err = %v, want one naming can_serve_mug_drinks", err)
+		t.Errorf("handle center = %+v, want X=100, Y=%v", h, 200+59.5)
 	}
 }

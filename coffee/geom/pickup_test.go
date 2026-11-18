@@ -389,12 +389,12 @@ func TestMugGeometriesHandleOnLeft(t *testing.T) {
 			t.Fatalf("yaw %v: got %d geometries, want 2", yaw, len(geos))
 		}
 		if got := geos[0].Pose().Point(); got.Sub(centroid).Norm() > 1e-6 {
-			t.Errorf("yaw %v: body centre %v, want %v", yaw, got, centroid)
+			t.Errorf("yaw %v: body center %v, want %v", yaw, got, centroid)
 		}
 		// The arm's left is the heading turned +90 degrees.
 		want := centroid.Add(r3.Vector{X: -math.Sin(yaw), Y: math.Cos(yaw)}.Mul(40 + 19.5))
 		if got := geos[1].Pose().Point(); got.Sub(want).Norm() > 1e-6 {
-			t.Errorf("yaw %v: handle centre %v, want %v", yaw, got, want)
+			t.Errorf("yaw %v: handle center %v, want %v", yaw, got, want)
 		}
 		if got := geos[1].Pose().Point().Z; math.Abs(got-50) > 1e-6 {
 			t.Errorf("yaw %v: handle Z %v, want 50", yaw, got)

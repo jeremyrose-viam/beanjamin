@@ -1,5 +1,10 @@
 package coffee
 
+// The mug drinks' arm routines: carry a mug between the group head and the hot
+// water spout, stage it there while hot water is added, and pick it back up.
+// Gated by can_serve_mug_drinks. The order phases that call them are in
+// prepare_mug.go.
+
 import (
 	"context"
 	"fmt"
@@ -9,9 +14,9 @@ import (
 // the hot water spout while the arm is away operating the hot water switch.
 const stagedMugFrameName = "staged-mug"
 
-// slideMugToWater carries the full mug from under the group head to the hot
-// water spout (mug_ready_for_water, 32 mm to the arm's right) along a straight
-// line, slowly because the mug is full.
+// slideMugToWater carries the full mug from under the group head to
+// mug_ready_for_water, under the hot water outlet, along a straight line,
+// slowly because the mug is full.
 func (s *beanjaminCoffee) slideMugToWater(ctx, cancelCtx context.Context) error {
 	step := Step{PoseName: clawPoseMugReadyForWater, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint,
 		MoveOptions: s.slowMoveOptions(), AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions)}

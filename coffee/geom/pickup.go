@@ -132,9 +132,9 @@ func MugGeometries(centroid, bodyDims r3.Vector, handleDepthMm, handleWidthMm, y
 		return nil, err
 	}
 	offset := bodyDims.Y/2 + handleDepthMm/2
-	handleCentre := centroid.Add(r3.Vector{X: -math.Sin(yawRad) * offset, Y: math.Cos(yawRad) * offset})
+	handleCenter := centroid.Add(r3.Vector{X: -math.Sin(yawRad) * offset, Y: math.Cos(yawRad) * offset})
 	handleDims := r3.Vector{X: handleWidthMm, Y: handleDepthMm, Z: bodyDims.Z}
-	handle, err := ContainerBox(handleCentre, handleDims, yawRad, label+"-handle")
+	handle, err := ContainerBox(handleCenter, handleDims, yawRad, label+"-handle")
 	if err != nil {
 		return nil, err
 	}

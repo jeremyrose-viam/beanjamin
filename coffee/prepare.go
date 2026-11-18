@@ -78,7 +78,7 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 		return fn(phaseCtx, cancelCtx)
 	}
 
-	// Hot water brews no coffee: its own seven phases, under the same defers.
+	// Hot water brews no coffee: its own eight phases, under the same defers.
 	if !order.BrewsCoffee(drink) {
 		return s.prepareHotWater(ctx, cancelCtx, o, runPhase)
 	}
@@ -229,7 +229,7 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 			servedSlot, err = s.serveIced(ctx, cancelCtx, o.Milk, placeDrink)
 		case order.IsMug(drink):
 			// Americano: top the lungo up at the hot water spout, then serve.
-			servedSlot, err = s.serveAmericano(ctx, cancelCtx, cupApproached, placeDrink)
+			servedSlot, err = s.serveAmericano(ctx, cancelCtx, cupApproached, placeDrink, runPhase)
 		case cupApproached:
 			// Hot drink, gripper already poised over the cup: grasp it and serve it.
 			servedSlot, err = placeDrink(ctx, cancelCtx, s.graspBrewedCup)

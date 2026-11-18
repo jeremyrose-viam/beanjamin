@@ -6,142 +6,87 @@ package coffee
 
 import (
 	"context"
-	"fmt"
-
-	"go.viam.com/rdk/logging"
 
 	"beanjamin/coffee/order"
 )
 
 // phaseRunner is prepareDrink's runPhase: it publishes the step label, logs
-// the progress line and runs the phase in its own trace span.
+// the progress line and runs the phase in its own trace span. The mug routines
+// take it so their phases surface the same way.
 type phaseRunner func(step, spanName, progress string, fn func(ctx, cancelCtx context.Context) error) error
 
-// phaseSpec is one phase of a drink's routine as data: its step label, trace
-// span name and progress line. Keep the label and the progress line in sync:
-// both surface to the UI. Consecutive phases naming the same chunk are planned
-// together as that chunk (inChunk), as prepareDrink groups its phases; "" plans
-// the phase's motions on their own.
-type phaseSpec struct{ step, span, progress, chunk string }
-
-// hotWaterPhases is the hot water drink's routine. The gripper holds the
-// portafilter between orders, so it locks the empty portafilter into the group
-// head and lets go before it can pick up a mug, then takes it back at the end.
-// No grinding, tamping, brewing or cleaning. The move home is the last phase,
-// planned with the unlock as prepareDrink plans its own.
-func hotWaterPhases() []phaseSpec {
-	return []phaseSpec{
-		{stepLockingPortafilter, spanLockingPortafilter, "step 1/8: locking empty portafilter", chunkPreparePortafilter},
-		{stepReleasingFilter, spanReleasingFilter, "step 2/8: releasing filter", chunkPreparePortafilter},
-		{stepPlacingMug, spanPlacingMugAtWater, "step 3/8: placing mug at the hot water", ""},
-		{stepAddingHotWater, spanAddingHotWater, "step 4/8: adding hot water", ""},
-		{stepServing, spanServing, "step 5/8: serving mug", ""},
-		{stepGrabbingFilter, spanGrabbingFilter, "step 6/8: grabbing filter", chunkRetrievePortafilter},
-		{stepUnlockingPortafilter, spanUnlockingPortafilter, "step 7/8: unlocking portafilter", chunkRetrievePortafilter},
-		{stepFinishingUp, spanMovingHome, "step 8/8: moving to home pose", chunkRetrievePortafilter},
+// actionPhase is the phaseRunner for a mug routine run by execute_action, outside
+// an order: it publishes the step label, logs the progress line and runs the
+// phase on the action's contexts.
+func (s *beanjaminCoffee) actionPhase(ctx, cancelCtx context.Context) phaseRunner {
+	return func(step, _, progress string, fn func(ctx, cancelCtx context.Context) error) error {
+		s.setStep(step)
+		s.logger.Info(progress)
+		return fn(ctx, cancelCtx)
 	}
 }
 
-// Chunks the hot water phases are planned in: the lock pivot with the release
-// after it, and the re-grab with the unlock pivot and the move home, as
-// prepareDrink plans them.
-const (
-	chunkPreparePortafilter  = "prepare portafilter"
-	chunkRetrievePortafilter = "retrieve portafilter"
-)
-
-// Span names of the hot water phases; hotWaterPhases lists them and
-// hotWaterRoutines binds each to its routine.
-const (
-	spanLockingPortafilter   = "locking_portafilter"
-	spanReleasingFilter      = "releasing_filter"
-	spanPlacingMugAtWater    = "placing_mug_at_water"
-	spanAddingHotWater       = "adding_hot_water"
-	spanServing              = "serving"
-	spanGrabbingFilter       = "grabbing_filter"
-	spanUnlockingPortafilter = "unlocking_portafilter"
-	spanMovingHome           = "moving_home"
-)
-
-// hotWaterRoutines binds each hot water phase span to its routine. servedSlot
-// receives where the serving phase put the mug.
-func (s *beanjaminCoffee) hotWaterRoutines(o order.Order, servedSlot *int) map[string]func(ctx, cancelCtx context.Context) error {
-	return map[string]func(ctx, cancelCtx context.Context) error{
-		spanLockingPortafilter: s.lockPortaFilter,
-		spanReleasingFilter:    s.releaseFilter,
-		spanPlacingMugAtWater:  s.placeMugAtWater,
-		spanAddingHotWater: func(ctx, cancelCtx context.Context) error {
-			return s.dispenseHotWater(ctx, cancelCtx, o.Drink)
-		},
-		spanServing: func(ctx, cancelCtx context.Context) (err error) {
-			*servedSlot, err = s.grabAndShelve(ctx, cancelCtx, s.regrabMugAtWater)
-			return err
-		},
-		spanGrabbingFilter:       s.grabFilter,
-		spanUnlockingPortafilter: s.unlockPortaFilter,
-		spanMovingHome: func(ctx, cancelCtx context.Context) error {
-			return s.executeStep(ctx, cancelCtx, Step{PoseName: filterPoseHome, PoseSwitch: s.filterSw})
-		},
-	}
-}
-
-// prepareHotWater runs the hot water drink: the phases of hotWaterPhases, each
-// bound to its routine by span, ending with the home move. Called from prepareDrink
-// after its shared setup, so the same defers (failed-step capture, pause on
-// fault, flow end) cover it. A mug drink always goes to the shelf, never the
-// delivery cart.
+// prepareHotWater runs the hot water drink. The gripper holds the portafilter
+// between orders, so it locks the empty portafilter into the group head and lets
+// go before it can pick up a mug, then takes it back at the end. No grinding,
+// tamping, brewing or cleaning. Called from prepareDrink after its shared setup,
+// so the same defers (failed-step capture, pause on fault, run end) cover it. A
+// mug drink always goes to the shelf, never the delivery cart.
 func (s *beanjaminCoffee) prepareHotWater(ctx, cancelCtx context.Context, o order.Order, runPhase phaseRunner) error {
 	drink := o.Drink
 	logger := s.activeOrderLogger()
 
-	servedSlot := -1
-	routines := s.hotWaterRoutines(o, &servedSlot)
-	runOne := func(p phaseSpec) error {
-		fn, ok := routines[p.span]
-		if !ok {
-			return fmt.Errorf("prepare_hot_water: no routine for phase %q", p.span)
-		}
-		if err := runPhase(p.step, p.span, p.progress, fn); err != nil {
+	// Locking the empty portafilter and releasing it are one chunk, as in
+	// prepareDrink.
+	if err := s.inChunk("prepare portafilter", func() error {
+		if err := runPhase(stepLockingPortafilter, "locking_portafilter", "step 1/8: locking empty portafilter", s.lockPortaFilter); err != nil {
 			return err
 		}
-		switch p.span {
-		case spanPlacingMugAtWater:
-			// A mug was pulled off the shelf; count it now so a later fault still credits real use.
-			label, key := cupCounter(drink)
-			s.countUsage(ctx, label, key, 1)
-		case spanAddingHotWater:
-			s.countUsage(ctx, "water", "water_used", waterDelta(drink))
-		case spanServing:
-			s.announceServed(ctx, logger, o, servedSlot, false)
-		}
-		return nil
+		return runPhase(stepReleasingFilter, "releasing_filter", "step 2/8: releasing filter", s.releaseFilter)
+	}); err != nil {
+		return err
 	}
-	phases := hotWaterPhases()
-	for i := 0; i < len(phases); {
-		j := i + 1
-		for j < len(phases) && phases[i].chunk != "" && phases[j].chunk == phases[i].chunk {
-			j++
-		}
-		group := phases[i:j]
-		runGroup := func() error {
-			for _, p := range group {
-				if err := runOne(p); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		var err error
-		if name := group[0].chunk; name != "" {
-			err = s.inChunk(name, runGroup)
-		} else {
-			err = runGroup()
-		}
-		if err != nil {
+
+	if err := runPhase(stepPlacingMug, "placing_mug_at_water", "step 3/8: placing mug at the hot water", s.placeMugAtWater); err != nil {
+		return err
+	}
+	// A mug was pulled off the shelf; count it now so a later fault still credits real use.
+	mugLabel, mugKey := cupCounter(drink)
+	s.countUsage(ctx, mugLabel, mugKey, 1)
+
+	addHotWater := func(ctx, cancelCtx context.Context) error { return s.dispenseHotWater(ctx, cancelCtx, drink) }
+	if err := runPhase(stepAddingHotWater, "adding_hot_water", "step 4/8: adding hot water", addHotWater); err != nil {
+		return err
+	}
+	s.countUsage(ctx, "water", "water_used", waterDelta(drink))
+
+	var servedSlot int
+	serve := func(ctx, cancelCtx context.Context) (err error) {
+		servedSlot, err = s.grabAndShelve(ctx, cancelCtx, s.regrabMugAtWater)
+		return err
+	}
+	if err := runPhase(stepServing, "serving", "step 5/8: serving mug", serve); err != nil {
+		return err
+	}
+	s.announceServed(ctx, logger, o, servedSlot, false)
+
+	// Retrieving the portafilter through the move home is one chunk, as in
+	// prepareDrink.
+	if err := s.inChunk("retrieve portafilter", func() error {
+		if err := runPhase(stepGrabbingFilter, "grabbing_filter", "step 6/8: grabbing filter", s.grabFilter); err != nil {
 			return err
 		}
-		i = j
+		if err := runPhase(stepUnlockingPortafilter, "unlocking_portafilter", "step 7/8: unlocking portafilter", s.unlockPortaFilter); err != nil {
+			return err
+		}
+		moveHome := func(ctx, cancelCtx context.Context) error {
+			return s.executeStep(ctx, cancelCtx, Step{PoseName: filterPoseHome, PoseSwitch: s.filterSw})
+		}
+		return runPhase(stepFinishingUp, "moving_home", "step 8/8: moving to home pose", moveHome)
+	}); err != nil {
+		return err
 	}
+
 	logger.Infof("%s preparation complete", drink)
 	return nil
 }
@@ -155,10 +100,9 @@ func (s *beanjaminCoffee) prepareHotWater(ctx, cancelCtx context.Context, o orde
 //
 // The top-up runs before the placement rather than as its grab, so a slot that
 // fails to plan only re-records the placement, never the top-up.
-func (s *beanjaminCoffee) serveAmericano(ctx, cancelCtx context.Context, approached bool, placeDrink servePlacement) (int, error) {
-	logger := s.activeOrderLogger()
+func (s *beanjaminCoffee) serveAmericano(ctx, cancelCtx context.Context, approached bool, placeDrink servePlacement, runPhase phaseRunner) (int, error) {
 	if err := s.inChunk(chunkAmericanoTopUp, func() error {
-		return s.topUpAmericano(ctx, cancelCtx, approached, logger)
+		return s.topUpAmericano(ctx, cancelCtx, approached, runPhase)
 	}); err != nil {
 		return -1, err
 	}
@@ -172,7 +116,7 @@ const chunkAmericanoTopUp = "top up americano"
 
 // topUpAmericano is serveAmericano's top-up stretch: it ends with the topped-up
 // mug in the gripper, clear of the spout.
-func (s *beanjaminCoffee) topUpAmericano(ctx, cancelCtx context.Context, approached bool, logger logging.Logger) error {
+func (s *beanjaminCoffee) topUpAmericano(ctx, cancelCtx context.Context, approached bool, runPhase phaseRunner) error {
 	mug := s.mugVessel()
 	if !approached {
 		if err := s.approachBrewedVessel(ctx, cancelCtx, mug); err != nil {
@@ -188,9 +132,8 @@ func (s *beanjaminCoffee) topUpAmericano(ctx, cancelCtx context.Context, approac
 	if err := s.setMugAtWater(ctx, cancelCtx); err != nil {
 		return err
 	}
-	s.setStep(stepAddingHotWater)
-	s.handOffEffect(func() { logger.Info("step 6c/9: adding hot water") })
-	if err := s.dispenseHotWater(ctx, cancelCtx, "americano"); err != nil {
+	addHotWater := func(ctx, cancelCtx context.Context) error { return s.dispenseHotWater(ctx, cancelCtx, "americano") }
+	if err := runPhase(stepAddingHotWater, "adding_hot_water", "step 6c/9: adding hot water", addHotWater); err != nil {
 		return err
 	}
 	return s.regrabMugAtWater(ctx, cancelCtx)

@@ -185,7 +185,7 @@ func (s *beanjaminCoffee) mugPickupTarget() *pickupTarget {
 		noItemSpeak:      "I don't see a mug yet — please place one on the mug shelf. Trying again in 15 seconds.",
 		unreachableSpeak: "I can see a mug but I'm having trouble grabbing it — could you nudge it a little? Trying again in 15 seconds.",
 		shieldFrame:      cleanMugAreaShieldFrameName,
-		retreatSpeed:     nil,
+		retreatSpeed:     nil, // the mug is empty, so the arm's default speed
 	}
 }
 
@@ -537,15 +537,6 @@ func (s *beanjaminCoffee) pickGlassDynamic(ctx, cancelCtx context.Context) error
 // observe switch). Called by the mug drink sequence and pick_mug.
 func (s *beanjaminCoffee) pickMugDynamic(ctx, cancelCtx context.Context) error {
 	return s.pickDynamic(ctx, cancelCtx, s.mugPickupTarget())
-}
-
-// requireMugDrinks is the guard for the mug actions: without can_serve_mug_drinks
-// the mug vision service and observe switch are nil.
-func (s *beanjaminCoffee) requireMugDrinks(action string) error {
-	if !s.cfg.CanServeMugDrinks {
-		return fmt.Errorf("%s requires can_serve_mug_drinks to be enabled", action)
-	}
-	return nil
 }
 
 // announceAndWaitForRetry recovers the arm to the observe home pose, speaks the

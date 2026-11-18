@@ -664,12 +664,6 @@ func (sc *sceneState) regrabStagedItem(at placement, it stagedItem) (bool, error
 	return true, err
 }
 
-// removeStagedGlass drops the staged-glass obstacle created by stageHeldGlass,
-// if any.
-func (sc *sceneState) removeStagedGlass() {
-	sc.removeStaged(stagedGlass)
-}
-
 // removeStaged drops a staged item's obstacle created by stageHeldItem, if any.
 func (sc *sceneState) removeStaged(it stagedItem) {
 	if existing := sc.fs.Frame(it.frame); existing != nil {

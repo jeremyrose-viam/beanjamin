@@ -1,5 +1,9 @@
 package coffee
 
+// The vessel a coffee is brewed into: a cup for an espresso or lungo, a mug for
+// an Americano. Placing it under the group head and taking it back out are the
+// same routine for both, parameterized by vessel.
+
 import "context"
 
 // vessel is what differs between a cup and a mug on the way under the group
@@ -14,6 +18,8 @@ type vessel struct {
 	dimsField        string                                     // config key attachConfigured models from, for messages
 }
 
+// cupVessel is the espresso cup: picked by the cup vision pipeline and modeled
+// from cup_dimensions.
 func (s *beanjaminCoffee) cupVessel() vessel {
 	return vessel{
 		label:            pickupLabelCup,
@@ -25,6 +31,8 @@ func (s *beanjaminCoffee) cupVessel() vessel {
 	}
 }
 
+// mugVessel is the Americano's mug: picked by its own vision pipeline and
+// modeled from mug_dimensions plus its handle (can_serve_mug_drinks).
 func (s *beanjaminCoffee) mugVessel() vessel {
 	return vessel{
 		label:            pickupLabelMug,

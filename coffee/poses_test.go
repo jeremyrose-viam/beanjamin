@@ -159,11 +159,4 @@ func TestMugPosesLevel(t *testing.T) {
 	if err := mugPosesLevel(clawPoseMugWaterApproach, at(200, "a"), clawPoseMugReadyForWater, at(200, "b")); err == nil {
 		t.Error("different frames: want an error")
 	}
-	pairs := map[string]string{}
-	for _, p := range mugLevelPairs {
-		pairs[p[0]] = p[1]
-	}
-	if pairs[clawPoseMugUnderMachineApproach] != clawPoseMugReadyForCoffee || pairs[clawPoseMugWaterApproach] != clawPoseMugReadyForWater {
-		t.Errorf("mugLevelPairs = %v", mugLevelPairs)
-	}
 }

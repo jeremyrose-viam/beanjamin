@@ -215,7 +215,7 @@ func TestSlotWithdrawPoseIsLevelWithTheDrop(t *testing.T) {
 // is refused (and not as a planning failure, so no other slot is tried), one
 // outside it or with no shield in the frame system passes.
 func TestWithdrawPointMustBeOutsideTheShield(t *testing.T) {
-	// A 200 x 200 x 100 mm shield centred at (500, 0, 150), turned 30 degrees
+	// A 200 x 200 x 100 mm shield centered at (500, 0, 150), turned 30 degrees
 	// about Z so the check has to respect its pose.
 	shieldPose := spatialmath.NewPose(r3.Vector{X: 500, Y: 0, Z: 150}, &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 30})
 	// The pose rides on the geometry, as the frame system's world-anchored

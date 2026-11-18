@@ -732,3 +732,20 @@ func TestStageHeldItemShiftsHandleWithBody(t *testing.T) {
 		t.Fatalf("re-grabbed mug has %d geometries, want 2", got)
 	}
 }
+
+func TestConfiguredMugGeometryHasHandle(t *testing.T) {
+	fs := gripPointStaticFS(t, spatialmath.NewPoseFromPoint(r3.Vector{X: 170, Y: -300, Z: 250}))
+	s := heldGeomService(t, fs)
+	s.cfg.MugDimensions = &ContainerDimensions{DiameterMm: 80, HeightMm: 90}
+	s.cfg.MugHandleDimensions = &HandleDimensions{DepthMm: 30, WidthMm: 20}
+	s.cfg.MugGrabRelativePose = &RelativePose{X: 5, Z: -30}
+
+	geoms, err := s.scene().configuredMugGeometries(placement{inputs: referenceframe.NewZeroInputs(fs)}, s.cfg)
+	if err != nil {
+		t.Fatalf("configuredMugGeometries: %v", err)
+	}
+	if len(geoms) != 2 {
+		t.Fatalf("got %d geometries, want body + handle", len(geoms))
+	}
+	requireVecEqual(t, geoms[0].Pose().Point(), r3.Vector{X: 165, Y: -300, Z: 280}, 1e-6)
+}

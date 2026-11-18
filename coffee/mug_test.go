@@ -76,3 +76,21 @@ func TestDispenseHotWaterStubIsNoop(t *testing.T) {
 		t.Errorf("dispenseHotWater = %v, want nil", err)
 	}
 }
+
+var mugActions = []string{
+	"pick_mug", "set_mug_for_coffee", "grab_brewed_mug", "slide_mug_to_water", "set_mug_at_water",
+	"dispense_hot_water", "regrab_mug_at_water", "place_mug_at_water", "serve_americano", "serve_hot_water",
+}
+
+func TestMugActionsRegisteredWithMugDrinks(t *testing.T) {
+	mug := (&beanjaminCoffee{cfg: &Config{CanServeMugDrinks: true}}).actionFuncs()
+	plain := (&beanjaminCoffee{cfg: &Config{}}).actionFuncs()
+	for _, name := range mugActions {
+		if _, ok := mug[name]; !ok {
+			t.Errorf("%s is not registered on a machine that serves mug drinks", name)
+		}
+		if _, ok := plain[name]; ok {
+			t.Errorf("%s is registered on a machine that cannot serve mug drinks", name)
+		}
+	}
+}

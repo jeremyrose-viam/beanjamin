@@ -18,78 +18,16 @@ import (
 // to, so their closures drop it and return only the error.
 func (s *beanjaminCoffee) actionFuncs() map[string]func(ctx, cancelCtx context.Context) error {
 	actions := map[string]func(ctx, cancelCtx context.Context) error{
-		"grind_coffee":       s.grindCoffee,
-		"tamp_ground":        s.tampGround,
-		"lock_portafilter":   s.lockPortaFilter,
-		"unlock_portafilter": s.unlockPortaFilter,
-		"release_filter":     s.releaseFilter,
-		"grab_filter":        s.grabFilter,
-		"brew_coffee":        s.brewCoffee,
-		"set_cup_for_coffee": s.setCupForCoffee,
-		"clean_portafilter":  s.cleanPortafilter,
-		"fetch_glass":        s.fetchGlass, // vision-grab a glass off the shelf
-		"pick_mug": func(ctx, cancelCtx context.Context) error { // vision-grab a mug off the shelf
-			if err := s.requireMugDrinks("pick_mug"); err != nil {
-				return err
-			}
-			return s.pickMugDynamic(ctx, cancelCtx)
-		},
-		"set_mug_for_coffee": func(ctx, cancelCtx context.Context) error { // vision-grab a mug and set it under the group head
-			if err := s.requireMugDrinks("set_mug_for_coffee"); err != nil {
-				return err
-			}
-			return s.setMugForCoffee(ctx, cancelCtx)
-		},
-		"grab_brewed_mug": func(ctx, cancelCtx context.Context) error { // retrieve mug from under machine
-			if err := s.requireMugDrinks("grab_brewed_mug"); err != nil {
-				return err
-			}
-			return s.grabBrewedMugFromMachine(ctx, cancelCtx)
-		},
-		"slide_mug_to_water": func(ctx, cancelCtx context.Context) error { // carry the held mug from the group head to the spout
-			if err := s.requireMugDrinks("slide_mug_to_water"); err != nil {
-				return err
-			}
-			return s.slideMugToWater(ctx, cancelCtx)
-		},
-		"set_mug_at_water": func(ctx, cancelCtx context.Context) error { // set the held mug down at the spout, back away
-			if err := s.requireMugDrinks("set_mug_at_water"); err != nil {
-				return err
-			}
-			return s.setMugAtWater(ctx, cancelCtx)
-		},
-		"dispense_hot_water": func(ctx, cancelCtx context.Context) error { // hot water routine (stub for now)
-			if err := s.requireMugDrinks("dispense_hot_water"); err != nil {
-				return err
-			}
-			return s.dispenseHotWater(ctx, cancelCtx, "americano")
-		},
-		"regrab_mug_at_water": func(ctx, cancelCtx context.Context) error { // pick the staged mug back up
-			if err := s.requireMugDrinks("regrab_mug_at_water"); err != nil {
-				return err
-			}
-			return s.regrabMugAtWater(ctx, cancelCtx)
-		},
-		"place_mug_at_water": func(ctx, cancelCtx context.Context) error { // vision-grab an empty mug and set it at the spout
-			if err := s.requireMugDrinks("place_mug_at_water"); err != nil {
-				return err
-			}
-			return s.placeMugAtWater(ctx, cancelCtx)
-		},
-		"serve_americano": func(ctx, cancelCtx context.Context) error { // from a lungo brewed into a mug: grasp, top up with hot water, serve
-			if err := s.requireMugDrinks("serve_americano"); err != nil {
-				return err
-			}
-			_, err := s.serveAmericano(ctx, cancelCtx, false, s.grabAndShelve)
-			return err
-		},
-		"serve_hot_water": func(ctx, cancelCtx context.Context) error { // place a mug at the spout, add hot water, serve
-			if err := s.requireMugDrinks("serve_hot_water"); err != nil {
-				return err
-			}
-			_, err := s.serveHotWater(ctx, cancelCtx)
-			return err
-		},
+		"grind_coffee":         s.grindCoffee,
+		"tamp_ground":          s.tampGround,
+		"lock_portafilter":     s.lockPortaFilter,
+		"unlock_portafilter":   s.unlockPortaFilter,
+		"release_filter":       s.releaseFilter,
+		"grab_filter":          s.grabFilter,
+		"brew_coffee":          s.brewCoffee,
+		"set_cup_for_coffee":   s.setCupForCoffee,
+		"clean_portafilter":    s.cleanPortafilter,
+		"fetch_glass":          s.fetchGlass,               // vision-grab a glass off the shelf
 		"pulse_ice_pin":        s.pulseIcePin,              // hardware only, no arm motion
 		"dispense_ice":         s.dispenseIce,              // arm to chute + pulse + retreat
 		"move_to_ice_dispense": s.moveToIceDispense,        // dispense_ice's move half, no pin
@@ -134,6 +72,33 @@ func (s *beanjaminCoffee) actionFuncs() map[string]func(ctx, cancelCtx context.C
 	for _, beans := range s.cfg.beanNames() {
 		actions[grindActionName(beans)] = func(ctx, cancelCtx context.Context) error {
 			return s.grindBeans(ctx, cancelCtx, beans)
+		}
+	}
+
+	// Only register the mug actions when this machine serves mug drinks: without
+	// can_serve_mug_drinks the mug vision service and observe switch are nil.
+	if s.cfg.CanServeMugDrinks {
+		actions["pick_mug"] = s.pickMugDynamic                  // vision-grab a mug off the shelf
+		actions["set_mug_for_coffee"] = s.setMugForCoffee       // vision-grab a mug and set it under the group head
+		actions["grab_brewed_mug"] = s.grabBrewedMugFromMachine // retrieve mug from under machine
+		actions["slide_mug_to_water"] = s.slideMugToWater       // carry the held mug from the group head to the spout
+		actions["set_mug_at_water"] = s.setMugAtWater           // set the held mug down at the spout, back away
+		actions["regrab_mug_at_water"] = s.regrabMugAtWater     // pick the staged mug back up
+		actions["place_mug_at_water"] = s.placeMugAtWater       // vision-grab an empty mug and set it at the spout
+
+		// hot water routine (stub for now)
+		actions["dispense_hot_water"] = func(ctx, cancelCtx context.Context) error {
+			return s.dispenseHotWater(ctx, cancelCtx, "americano")
+		}
+		// from a lungo brewed into a mug: grasp, top up with hot water, serve
+		actions["serve_americano"] = func(ctx, cancelCtx context.Context) error {
+			_, err := s.serveAmericano(ctx, cancelCtx, false, s.grabAndShelve, s.actionPhase(ctx, cancelCtx))
+			return err
+		}
+		// place a mug at the spout, add hot water, serve
+		actions["serve_hot_water"] = func(ctx, cancelCtx context.Context) error {
+			_, err := s.serveHotWater(ctx, cancelCtx)
+			return err
 		}
 	}
 
