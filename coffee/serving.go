@@ -11,47 +11,61 @@ import (
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/spatialmath"
 
 	"beanjamin/coffee/geom"
 )
 
-func (s *beanjaminCoffee) setCupForCoffee(ctx, cancelCtx context.Context) error {
+// setVesselForCoffee picks the empty vessel off its shelf and sets it under the
+// group head, then backs away and closes the gripper.
+func (s *beanjaminCoffee) setVesselForCoffee(ctx, cancelCtx context.Context, v vessel) error {
+	name := "set_" + v.label + "_for_coffee"
 	if s.gripper == nil {
-		return fmt.Errorf("set_cup_for_coffee: no gripper configured")
+		return fmt.Errorf("%s: no gripper configured", name)
 	}
 
-	if err := s.pickCupDynamic(ctx, cancelCtx); err != nil {
+	if err := v.pick(ctx, cancelCtx); err != nil {
 		return err
 	}
 
-	cupPlacementApproach := Step{PoseName: clawPoseCupUnderMachineApproach, PoseSwitch: s.clawsSw}
-	if err := s.executeStep(ctx, cancelCtx, cupPlacementApproach); err != nil {
-		return fmt.Errorf("set_cup_for_coffee: %w", err)
+	placementApproach := Step{PoseName: v.underApproach, PoseSwitch: s.clawsSw}
+	if err := s.executeStep(ctx, cancelCtx, placementApproach); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
 	}
-	// The cup is empty, so the arm's default speed.
-	readyStep := Step{PoseName: clawPoseCupReadyForCoffee, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint, Pause: shortPause, AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions)}
+	// The vessel is empty, so the arm's default speed.
+	readyStep := Step{PoseName: v.readyForCoffee, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint, Pause: shortPause, AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions)}
 	if err := s.executeStep(ctx, cancelCtx, readyStep); err != nil {
-		return fmt.Errorf("set_cup_for_coffee: %w", err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 
-	// Release the cup.
+	// Release the vessel.
 	if err := s.openGripper(ctx); err != nil {
-		return fmt.Errorf("set_cup_for_coffee: %w", err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
-	// Cup is released under the machine; it no longer travels with the gripper.
+	// The vessel is released under the machine; it no longer travels with the gripper.
 	s.detachHeldGeometry()
 
-	// Move away from the cup. The gripper is empty, so the arm's default speed.
-	exitStep := Step{PoseName: clawPoseCupUnderMachineApproach, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint}
+	// Move away from the vessel. The gripper is empty, so the arm's default speed.
+	exitStep := Step{PoseName: v.underApproach, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint}
 	if err := s.executeStep(ctx, cancelCtx, exitStep); err != nil {
-		return fmt.Errorf("set_cup_for_coffee: %w", err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 
 	// Close the gripper after moving away.
 	if err := s.closeGripper(ctx); err != nil {
-		return fmt.Errorf("set_cup_for_coffee: %w", err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
+}
+
+// setCupForCoffee picks an empty cup off the shelf and sets it under the group head.
+func (s *beanjaminCoffee) setCupForCoffee(ctx, cancelCtx context.Context) error {
+	return s.setVesselForCoffee(ctx, cancelCtx, s.cupVessel())
+}
+
+// setMugForCoffee is setCupForCoffee for a mug (can_serve_mug_drinks).
+func (s *beanjaminCoffee) setMugForCoffee(ctx, cancelCtx context.Context) error {
+	return s.setVesselForCoffee(ctx, cancelCtx, s.mugVessel())
 }
 
 // placeFullCupOnShelf retrieves the brewed cup from cup_ready_for_coffee and
@@ -155,7 +169,8 @@ func (s *beanjaminCoffee) placeHeldInArea(ctx, cancelCtx context.Context, area p
 // approach pose above the slot, descend linearly to the drop pose (placement
 // anchor = shelfTopZ + servingAreaDropZOffset, i.e. the held container's
 // half-height, so its bottom rests on the shelf regardless of its height),
-// release, then retreat linearly and close the gripper.
+// release, then withdraw linearly straight back at the drop height (no change
+// in Z, see slotPlacementPoses) and close the gripper.
 //
 // ServingGrabRelativePose is the grip-point-to-container offset used at release
 // (composed onto the placement anchor here) — shared by the hot cup and the
@@ -185,13 +200,24 @@ func (s *beanjaminCoffee) tryDropCupInSlot(ctx, cancelCtx context.Context, area 
 		Y: tileWorld.Y,
 		Z: shelfTopZ + s.servingAreaDropZOffset(),
 	}
-	dropPose := geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(s.cfg.ServingGrabRelativePose))
-	approachPose := geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(s.cfg.ServingApproachRelativePose))
+	grabOffset, approachOffset := s.servingOffsets()
+	dropPose, approachPose, withdrawPose := slotPlacementPoses(dropAnchor, grabOffset, approachOffset)
 
 	approachPD := &poseData{pose: approachPose, refFrame: referenceframe.World, componentName: gripPoint}
 	dropPD := &poseData{pose: dropPose, refFrame: referenceframe.World, componentName: gripPoint}
-	logger.Infof("shelf placement: slot (x=%.1f, y=%.1f) drop_pose=%v approach_pose=%v",
-		tileWorld.X, tileWorld.Y, dropPose, approachPose)
+	withdrawPD := &poseData{pose: withdrawPose, refFrame: referenceframe.World, componentName: gripPoint}
+	logger.Infof("shelf placement: slot (x=%.1f, y=%.1f) drop_pose=%v approach_pose=%v withdraw_pose=%v",
+		tileWorld.X, tileWorld.Y, dropPose, approachPose, withdrawPose)
+
+	// The withdrawal ends at the drop height. If that is still inside the area's
+	// shield, the next move would start in collision with it, and the planner
+	// ignores a pair already in collision at a move's start for the whole move:
+	// it could sweep sideways through the standing containers. Refuse before
+	// anything moves. Not a planning failure: every slot shares the offsets, so
+	// trying the next one would not help.
+	if err := s.checkWithdrawOutsideShield(area, withdrawPose.Point()); err != nil {
+		return err
+	}
 
 	// 1. Carry the held cup to the approach pose above the slot. A *filled*
 	// container is carried with its orientation held near level (carryHeldLevel)
@@ -232,18 +258,73 @@ func (s *beanjaminCoffee) tryDropCupInSlot(ctx, cancelCtx context.Context, area 
 	// Cup is released onto the shelf; it no longer travels with the gripper.
 	s.detachHeldGeometry()
 
-	// 4. Linear retreat back to the approach pose. The cup is released, but the
-	// gripper/claws start inside the area's shield, so the shield must stay
-	// allowed for the straight-up retreat to plan out of the slot (the held-item
-	// pair drops out now that nothing is attached). Nothing is held, so the arm's
-	// default speed.
-	if err := s.moveToRawPose(ctx, approachPD, defaultApproachConstraint, s.areaShieldCollisions(area.shieldFrame), nil); err != nil {
-		return fmt.Errorf("retreat after releasing cup (slot x=%.1f, y=%.1f): %v", tileWorld.X, tileWorld.Y, err)
+	// 4. Withdraw straight back, level, to the withdraw pose: the approach pose's
+	// X/Y at the drop pose's height. The jaws stay at the height they opened at,
+	// so they cannot catch a mug's handle on the way out. No move up to the
+	// approach pose follows: the next free move plans from here. The cup is
+	// released, but the gripper/claws start inside the area's shield, so the
+	// shield must stay allowed for the withdrawal to plan out of the slot (the
+	// held-item pair drops out now that nothing is attached). Nothing is held,
+	// so the arm's default speed.
+	if err := s.moveToRawPose(ctx, withdrawPD, defaultApproachConstraint, s.areaShieldCollisions(area.shieldFrame), nil); err != nil {
+		return fmt.Errorf("withdraw after releasing cup (slot x=%.1f, y=%.1f): %v", tileWorld.X, tileWorld.Y, err)
 	}
 
 	// 5. Close the gripper for the next move.
 	if err := s.closeGripper(ctx); err != nil {
 		return fmt.Errorf("close gripper after release: %w", err)
+	}
+	return nil
+}
+
+// slotPlacementPoses composes the serving offsets onto a slot's drop anchor:
+// the drop pose (grab offset), the approach pose (approach offset) and the
+// withdraw pose the gripper backs out to after the release. The withdraw pose
+// keeps the approach pose's X/Y but the drop pose's Z and orientation, so the
+// withdrawal is a straight, level move back: open jaws rising out of the slot
+// could catch a mug's handle.
+func slotPlacementPoses(dropAnchor r3.Vector, grabOffset, approachOffset *RelativePose) (drop, approach, withdraw spatialmath.Pose) {
+	drop = geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(grabOffset))
+	approach = geom.PoseRelativeTo(dropAnchor, relativePoseToSpatial(approachOffset))
+	at := approach.Point()
+	withdraw = spatialmath.NewPose(r3.Vector{X: at.X, Y: at.Y, Z: drop.Point().Z}, drop.Orientation())
+	return drop, approach, withdraw
+}
+
+// checkWithdrawOutsideShield returns an error when the withdraw grip point lies
+// inside the area's shield. A frame system without the shield passes.
+func (s *beanjaminCoffee) checkWithdrawOutsideShield(area placementArea, withdraw r3.Vector) error {
+	if area.shieldFrame == "" {
+		return nil
+	}
+	sc := s.scene()
+	fs := sc.fs
+	inputs := placement{inputs: sc.inputs}.fullInputs(fs).ToLinearInputs()
+	pt := spatialmath.NewPoint(withdraw, "")
+	for _, name := range []string{area.shieldFrame, area.shieldFrame + "_origin"} {
+		frame := fs.Frame(name)
+		if frame == nil {
+			continue
+		}
+		gif, err := frame.Geometries([]referenceframe.Input{})
+		if err != nil || len(gif.Geometries()) == 0 {
+			continue
+		}
+		tf, err := fs.Transform(inputs, gif, referenceframe.World)
+		if err != nil {
+			return fmt.Errorf("place_in_%s: locate shield %q: %w", area.frame, name, err)
+		}
+		for _, g := range tf.(*referenceframe.GeometriesInFrame).Geometries() {
+			inside, _, err := g.CollidesWith(pt, 0)
+			if err != nil {
+				return fmt.Errorf("place_in_%s: check withdraw point against shield %q: %w", area.frame, name, err)
+			}
+			if inside {
+				return fmt.Errorf("place_in_%s: withdraw point (x=%.1f, y=%.1f, z=%.1f) is inside the shield %q; "+
+					"the approach offset's x/y at the drop height must lie outside it, or the next move would ignore the shield",
+					area.frame, withdraw.X, withdraw.Y, withdraw.Z, area.shieldFrame)
+			}
+		}
 	}
 	return nil
 }

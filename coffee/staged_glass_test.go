@@ -45,7 +45,7 @@ func stagingService(t *testing.T, fs *referenceframe.FrameSystem) *beanjaminCoff
 	}}
 	pickupGrasp := testBox(t, spatialmath.NewZeroPose())
 	addHeldItem(t, s, pickupGrasp)
-	s.scene().cacheHeldGeometry(pickupLabelGlass, pickupGrasp)
+	s.scene().cacheHeldGeometry(pickupLabelGlass, []spatialmath.Geometry{pickupGrasp})
 	return s
 }
 
@@ -68,7 +68,7 @@ func TestStageAndRegrabGlassSeatsOnSurface(t *testing.T) {
 	}
 	// testBox is 80 mm tall: its center sits 40 mm above its seated base.
 	seatedCenter := r3.Vector{Z: 600 + surfaceRestClearanceMm + 40}
-	requireVecEqual(t, staged.Pose().Point(), seatedCenter, 1e-6)
+	requireVecEqual(t, staged[0].Pose().Point(), seatedCenter, 1e-6)
 
 	if err := s.regrabStagedGlass(context.Background()); err != nil {
 		t.Fatalf("regrabStagedGlass: %v", err)
@@ -77,7 +77,7 @@ func TestStageAndRegrabGlassSeatsOnSurface(t *testing.T) {
 		t.Fatalf("the staged-glass obstacle must be gone once re-grabbed")
 	}
 	requireVecEqual(t, heldItemWorldCenter(t, s.scene().fs, inputs), seatedCenter, 1e-6)
-	requireVecEqual(t, s.scene().cachedHeldGeometry(pickupLabelGlass).Pose().Point(), r3.Vector{Z: seatedCenter.Z - stagingGripZ}, 1e-6)
+	requireVecEqual(t, s.scene().cachedHeldGeometry(pickupLabelGlass)[0].Pose().Point(), r3.Vector{Z: seatedCenter.Z - stagingGripZ}, 1e-6)
 }
 
 // With no surface modeled beneath it, the glass is staged where it was released.
@@ -91,7 +91,7 @@ func TestStageGlassWithoutSurfaceStaysPut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stagedGlassGeometry: %v", err)
 	}
-	requireVecEqual(t, staged.Pose().Point(), r3.Vector{Z: stagingGripZ}, 1e-6)
+	requireVecEqual(t, staged[0].Pose().Point(), r3.Vector{Z: stagingGripZ}, 1e-6)
 }
 
 // A re-grab with no glass staged restores the grasp cached at pickup.

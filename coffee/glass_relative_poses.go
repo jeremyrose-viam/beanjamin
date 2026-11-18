@@ -75,10 +75,11 @@ func (s *beanjaminCoffee) glassRelativePoseData(poseName string, rel *RelativePo
 	if !s.scene().heldItemAttached {
 		return nil, fmt.Errorf("resolve %q: no container is modeled in the gripper to pour from", poseName)
 	}
-	glass, err := s.scene().stagedGlassGeometry()
+	glasses, err := s.scene().stagedGlassGeometry()
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q against the staged glass: %w", poseName, err)
 	}
+	glass := glasses[0]
 	// The staged glass is always a box (containerBox), whose Z extent is the
 	// glass height: the box is built upright and keeps its dims when lifted into
 	// the world at staging.
@@ -95,27 +96,32 @@ func (s *beanjaminCoffee) glassRelativePoseData(poseName string, rel *RelativePo
 	}, nil
 }
 
-// stagedGlassGeometry returns the staged glass's world-frame geometry, as
-// stageGlassAsObstacle recorded it. The frame is World-parented with an
-// identity transform, so the geometry's own pose is already in world
-// coordinates.
-func (sc *sceneState) stagedGlassGeometry() (spatialmath.Geometry, error) {
-	if !sc.stagedGlassPlaced || sc.fs == nil {
-		return nil, fmt.Errorf("no glass is staged in the frame system")
+// stagedGlassGeometry returns the staged glass's world-frame geometries (body
+// first), as stageGlassAsObstacle recorded them.
+func (sc *sceneState) stagedGlassGeometry() ([]spatialmath.Geometry, error) {
+	return sc.stagedGeometry(stagedGlass)
+}
+
+// stagedGeometry returns a staged item's world-frame geometries (body first).
+// The frame is World-parented with an identity transform, so the geometry's
+// own pose is already in world coordinates.
+func (sc *sceneState) stagedGeometry(it stagedItem) ([]spatialmath.Geometry, error) {
+	if !sc.stagedPlaced(it) || sc.fs == nil {
+		return nil, fmt.Errorf("no %s is staged in the frame system", it.label)
 	}
-	frame := sc.fs.Frame(stagedGlassFrameName)
+	frame := sc.fs.Frame(it.frame)
 	if frame == nil {
-		return nil, fmt.Errorf("no %q frame in the frame system", stagedGlassFrameName)
+		return nil, fmt.Errorf("no %q frame in the frame system", it.frame)
 	}
 	gif, err := frame.Geometries([]referenceframe.Input{})
 	if err != nil {
-		return nil, fmt.Errorf("get %q geometry: %w", stagedGlassFrameName, err)
+		return nil, fmt.Errorf("get %q geometry: %w", it.frame, err)
 	}
 	geos := gif.Geometries()
 	if len(geos) == 0 {
-		return nil, fmt.Errorf("%q frame carries no geometry", stagedGlassFrameName)
+		return nil, fmt.Errorf("%q frame carries no geometry", it.frame)
 	}
-	return geos[0], nil
+	return geos, nil
 }
 
 // glassRimCenter returns the world position of the center of the rim of a glass
