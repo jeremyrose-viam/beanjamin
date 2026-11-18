@@ -294,3 +294,19 @@ func (s *beanjaminCoffee) servingAreaDropZOffset() float64 {
 	}
 	return shelfDropZOffsetMm
 }
+
+// servingOffsets returns the grip-point-to-container offsets for the drop and
+// the approach. A held mug uses its own mug_serving_* offsets where set; any
+// unset one, and every other container, uses the shared serving_* offsets.
+func (s *beanjaminCoffee) servingOffsets() (grab, approach *RelativePose) {
+	grab, approach = s.cfg.ServingGrabRelativePose, s.cfg.ServingApproachRelativePose
+	if s.scene().heldItemLabel() == pickupLabelMug {
+		if s.cfg.MugServingGrabRelativePose != nil {
+			grab = s.cfg.MugServingGrabRelativePose
+		}
+		if s.cfg.MugServingApproachRelativePose != nil {
+			approach = s.cfg.MugServingApproachRelativePose
+		}
+	}
+	return grab, approach
+}

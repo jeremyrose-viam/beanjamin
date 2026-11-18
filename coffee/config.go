@@ -232,6 +232,22 @@ type Config struct {
 	// modeled from (see ContainerDimensions). Required when can_serve_iced is set.
 	GlassDimensions *ContainerDimensions `json:"glass_dimensions,omitempty"`
 
+	// Mug drinks (Americano, hot water) are served in a mug the arm fetches by
+	// its own vision pipeline, mirroring the glass. All required when
+	// can_serve_mug_drinks is set except the two serving offsets.
+	CanServeMugDrinks          bool                 `json:"can_serve_mug_drinks,omitempty"`
+	MugVisionServiceName       string               `json:"mug_vision_service_name,omitempty"`
+	MugObservePoseSwitcherName string               `json:"mug_observe_pose_switcher_name,omitempty"`
+	MugApproachRelativePose    *RelativePose        `json:"mug_approach_relative_pose,omitempty"`
+	MugGrabRelativePose        *RelativePose        `json:"mug_grab_relative_pose,omitempty"`
+	MugDimensions              *ContainerDimensions `json:"mug_dimensions,omitempty"`
+	// MugHandleDimensions is the known handle box (see HandleDimensions).
+	MugHandleDimensions *HandleDimensions `json:"mug_handle_dimensions,omitempty"`
+	// MugServingGrabRelativePose / MugServingApproachRelativePose are the
+	// optional grip offsets for the served mug on the serving shelf.
+	MugServingGrabRelativePose     *RelativePose `json:"mug_serving_grab_relative_pose,omitempty"`
+	MugServingApproachRelativePose *RelativePose `json:"mug_serving_approach_relative_pose,omitempty"`
+
 	// Pour offsets from the center of the staged glass's rim, resolved against
 	// the staged glass in the frame system (glass_relative_poses.go). The
 	// espresso pair is required when can_serve_iced is set, the milk pair when
@@ -355,6 +371,28 @@ type ContainerDimensions struct {
 // round container), height equals the height.
 func (d *ContainerDimensions) boxDims() r3.Vector {
 	return r3.Vector{X: d.DiameterMm, Y: d.DiameterMm, Z: d.HeightMm}
+}
+
+// HandleDimensions is the known size of a mug's handle box: how far it sticks
+// out from the body (depth) and its width along the body's wall.
+type HandleDimensions struct {
+	DepthMm float64 `json:"depth_mm"`
+	WidthMm float64 `json:"width_mm"`
+}
+
+// validate checks a required HandleDimensions: present, with a positive depth
+// and width. field is the JSON config key for error messages.
+func (h *HandleDimensions) validate(path, field string) error {
+	if h == nil {
+		return resource.NewConfigValidationFieldRequiredError(path, field)
+	}
+	if h.DepthMm <= 0 {
+		return fmt.Errorf("%s: %s.depth_mm must be > 0", path, field)
+	}
+	if h.WidthMm <= 0 {
+		return fmt.Errorf("%s: %s.width_mm must be > 0", path, field)
+	}
+	return nil
 }
 
 // validate checks a required ContainerDimensions: it must be present, with a
@@ -604,6 +642,28 @@ func (cfg *Config) Validate(path string) ([]string, []string, error) {
 		reqDeps = append(reqDeps,
 			vision.Named(cfg.GlassVisionServiceName).String(),
 			cfg.GlassObservePoseSwitcherName,
+		)
+	}
+
+	if cfg.CanServeMugDrinks {
+		// The mug is fetched by its own vision pipeline, reusing the cup camera.
+		if err := requireFields(path,
+			"mug_vision_service_name", cfg.MugVisionServiceName,
+			"mug_observe_pose_switcher_name", cfg.MugObservePoseSwitcherName,
+			"mug_approach_relative_pose", cfg.MugApproachRelativePose,
+			"mug_grab_relative_pose", cfg.MugGrabRelativePose,
+		); err != nil {
+			return nil, nil, err
+		}
+		if err := cfg.MugDimensions.validate(path, "mug_dimensions"); err != nil {
+			return nil, nil, err
+		}
+		if err := cfg.MugHandleDimensions.validate(path, "mug_handle_dimensions"); err != nil {
+			return nil, nil, err
+		}
+		reqDeps = append(reqDeps,
+			vision.Named(cfg.MugVisionServiceName).String(),
+			cfg.MugObservePoseSwitcherName,
 		)
 	}
 

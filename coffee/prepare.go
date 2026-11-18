@@ -17,8 +17,7 @@ import (
 // prepareDrink runs the brew cycle for one order. The order queue holds the arm
 // for the whole call and passes the context its claim returned as cancelCtx.
 func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.Order) (err error) {
-	drink, customerName := o.Drink, o.DisplayName()
-	batchIndex, batchSize := o.BatchIndex, o.BatchSize
+	drink := o.Drink
 	logger := s.activeOrderLogger()
 	ctx, span := trace.StartSpan(ctx, "beanjamin::prepareDrink["+drink+"]")
 	defer span.End()
@@ -58,7 +57,11 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 		return fmt.Errorf("refresh frame system before brew: %w", err)
 	}
 
-	logger.Infof("starting %s preparation (pour_wait=%v)", drink, s.drinkBrewTime(drink))
+	if order.BrewsCoffee(drink) {
+		logger.Infof("starting %s preparation (pour_wait=%v)", drink, s.drinkBrewTime(drink))
+	} else {
+		logger.Infof("starting %s preparation", drink)
+	}
 
 	if err := s.normalizeGripperAtStart(ctx); err != nil {
 		return fmt.Errorf("normalize gripper before brew: %w", err)
@@ -73,6 +76,11 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 		phaseCtx, stepSpan := trace.StartSpan(ctx, "beanjamin::step::"+spanName)
 		defer stepSpan.End()
 		return fn(phaseCtx, cancelCtx)
+	}
+
+	// Hot water brews no coffee: its own seven phases, under the same defers.
+	if !order.BrewsCoffee(drink) {
+		return s.prepareHotWater(ctx, cancelCtx, o, runPhase)
 	}
 
 	beans := o.Beans
@@ -115,8 +123,9 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 	// A delivery drink headed for the cart needs its slot found while the
 	// gripper is still empty, since the observe poses tilt the camera down at
 	// the cart. A hot drink does it during the pour instead of lining up over the
-	// cup; everything else does it just before the drink is grabbed.
-	toCart := o.Fulfillment == order.FulfillmentDelivery && s.deliverySlotsVision != nil
+	// cup; everything else does it just before the drink is grabbed. A mug drink
+	// always goes to the shelf.
+	toCart := o.Fulfillment == order.FulfillmentDelivery && s.deliverySlotsVision != nil && !order.IsMug(drink)
 	var cartSlot deliverySlot
 	cartSlotFound, cartLocated := false, false
 	locateCart := func(ctx, cancelCtx context.Context) (err error) {
@@ -125,7 +134,12 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 		return err
 	}
 	hotPrep := s.approachBrewedCup
-	if toCart {
+	switch {
+	case order.IsMug(drink):
+		hotPrep = func(ctx, cancelCtx context.Context) error {
+			return s.approachBrewedVessel(ctx, cancelCtx, s.mugVessel())
+		}
+	case toCart:
 		hotPrep = locateCart
 	}
 
@@ -146,12 +160,17 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 	// Placing the cup through the brew is one chunk. The cup is found by vision,
 	// so its pickup runs before anything is recorded; setting it under the
 	// machine and pressing the button are planned together.
+	placeStep, placeSpan, placeProgress, placeVessel := stepPlacingCup, "placing_cup", "step 5/9: placing cup", s.setCupForCoffee
+	if order.IsMug(drink) {
+		placeStep, placeSpan, placeProgress, placeVessel = stepPlacingMug, "placing_mug", "step 5/9: placing mug", s.setMugForCoffee
+	}
 	if err := s.inChunk("load cup and brew", func() error {
-		if err := runPhase(stepPlacingCup, "placing_cup", "step 5/9: placing cup", s.setCupForCoffee); err != nil {
+		if err := runPhase(placeStep, placeSpan, placeProgress, placeVessel); err != nil {
 			return err
 		}
-		// A cup was pulled off the stack; count it now so a later fault still credits real use.
-		s.countUsage(ctx, "espresso cups", "espresso_cups_used", 1)
+		// A cup (or mug) was pulled off the shelf; count it now so a later fault still credits real use.
+		cupLabel, cupKey := cupCounter(drink)
+		s.countUsage(ctx, cupLabel, cupKey, 1)
 		s.handOffEffect(func() {
 			if err := s.speaker.Say(ctx, speech.AlmostReady()); err != nil {
 				logger.Warnf("failed to say almost-ready: %v", err)
@@ -205,6 +224,9 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 			servedSlot, err = s.finishIced(ctx, cancelCtx, o.Milk, placeDrink)
 		case order.IsIced(drink):
 			servedSlot, err = s.serveIced(ctx, cancelCtx, o.Milk, placeDrink)
+		case order.IsMug(drink):
+			// Americano: top the lungo up at the hot water spout, then serve.
+			servedSlot, err = s.serveAmericano(ctx, cancelCtx, cupApproached, placeDrink)
 		case cupApproached:
 			// Hot drink, gripper already poised over the cup: grasp it and serve it.
 			servedSlot, err = placeDrink(ctx, cancelCtx, s.graspBrewedCup)
@@ -213,27 +235,14 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 		}
 		return err
 	}
-	if err := runPhase(stepServing, "serving", "step 6b/9: serving cup", serve); err != nil {
+	serveProgress := "step 6b/9: serving cup"
+	if order.IsMug(drink) {
+		serveProgress = "step 6b/9: serving mug"
+	}
+	if err := runPhase(stepServing, "serving", serveProgress, serve); err != nil {
 		return err
 	}
-	// Record where the drink physically landed so a delivery order can report it
-	// as the pickup_position: a shelf slot, or the cart slot's tag id.
-	o.PickupPosition = servedSlot
-	// The serve is planned ahead of the arm, so the drink is only ready once the
-	// arm has set it down and backed off: handed off, not announced from here.
-	served, servedInCart := o, inCart
-	s.handOffEffect(func() {
-		if served.Fulfillment == order.FulfillmentDelivery {
-			if !servedInCart {
-				s.delivery.markReady(served, s.deliveryHeartbeatTimeout())
-			}
-			if err := s.readyForDelivery(ctx, served); err != nil {
-				logger.Warnf("failed to announce ready-for-delivery: %v", err)
-			}
-		} else if err := s.speaker.SayAlways(ctx, speech.DrinkReady(served.Label(), customerName, batchIndex, batchSize)); err != nil {
-			logger.Warnf("failed to say drink-ready: %v", err)
-		}
-	})
+	s.announceServed(ctx, logger, o, servedSlot, inCart)
 
 	// Retrieving the portafilter through the move home is one chunk, so the
 	// unlock pivot is planned to leave the arm room for the cleaning moves.
@@ -257,6 +266,29 @@ func (s *beanjaminCoffee) prepareDrink(ctx, cancelCtx context.Context, o order.O
 
 	logger.Infof("%s preparation complete", drink)
 	return nil
+}
+
+// announceServed announces a drink that has just been set down. It records
+// where the drink physically landed so a delivery order can report it as the
+// pickup_position (a shelf slot, or the cart slot's tag id); a delivery order
+// is marked ready for the cart unless it is already in it and announced as
+// ready for delivery, and a pickup order gets the drink-ready line. The serve
+// is planned ahead of the arm, so the drink is only ready once the arm has set
+// it down and backed off: the announcement is handed off, not made from here.
+func (s *beanjaminCoffee) announceServed(ctx context.Context, logger logging.Logger, o order.Order, servedSlot int, inCart bool) {
+	o.PickupPosition = servedSlot
+	s.handOffEffect(func() {
+		if o.Fulfillment == order.FulfillmentDelivery {
+			if !inCart {
+				s.delivery.markReady(o, s.deliveryHeartbeatTimeout())
+			}
+			if err := s.readyForDelivery(ctx, o); err != nil {
+				logger.Warnf("failed to announce ready-for-delivery: %v", err)
+			}
+		} else if err := s.speaker.SayAlways(ctx, speech.DrinkReady(o.Label(), o.DisplayName(), o.BatchIndex, o.BatchSize)); err != nil {
+			logger.Warnf("failed to say drink-ready: %v", err)
+		}
+	})
 }
 
 // pauseOnFault pauses the queue after a genuine fault, so the next order waits
@@ -301,6 +333,9 @@ func (s *beanjaminCoffee) strandedState() []string {
 	}
 	if sc.stagedGlassPlaced {
 		stranded = append(stranded, "glass staged")
+	}
+	if sc.stagedMugPlaced {
+		stranded = append(stranded, "mug at the hot water dispenser")
 	}
 	if sc.doorOpenDegs != 0 {
 		stranded = append(stranded, fmt.Sprintf("fridge door open %.0f°", sc.doorOpenDegs))

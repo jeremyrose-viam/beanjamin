@@ -16,6 +16,7 @@ func (s *beanjaminCoffee) menu() order.Menu {
 		Iced:      s.cfg.CanServeIced,
 		IcedLatte: s.cfg.CanServeIcedLatte,
 		Milks:     s.cfg.milkNames(),
+		MugDrinks: s.cfg.CanServeMugDrinks,
 	}
 }
 
@@ -52,7 +53,7 @@ func (s *beanjaminCoffee) enqueueOrder(ctx context.Context, orderRaw any) (map[s
 		if err := s.speaker.Say(ctx, msg); err != nil {
 			s.logger.Warnf("failed to say rejection: %v", err)
 		}
-		return nil, fmt.Errorf("unsupported drink %q: %s", drink, msg)
+		return nil, fmt.Errorf("unsupported drink %q (%s): %s", drink, reason, msg)
 	}
 
 	beans, err := s.menu().ResolveBeans(req.Beans)

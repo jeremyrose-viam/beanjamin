@@ -410,6 +410,9 @@ func (rec *deliveryOrder) snapshot() map[string]any {
 }
 
 func deliveryCupType(drink string) string {
+	if order.IsMug(drink) {
+		return pickupLabelMug
+	}
 	if order.IsIced(drink) {
 		return pickupLabelGlass
 	}

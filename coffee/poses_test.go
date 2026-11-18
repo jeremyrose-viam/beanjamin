@@ -1,6 +1,12 @@
 package coffee
 
-import "testing"
+import (
+	"math"
+	"testing"
+
+	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/spatialmath"
+)
 
 func hasPose(poses []requiredPose, name string) bool {
 	for _, p := range poses {
@@ -35,6 +41,21 @@ func TestRequiredPosesConditional(t *testing.T) {
 	}
 	if hasPose(base, glassPoseObserve) {
 		t.Error("base config should not require iced/glass poses")
+	}
+	mugPoses := []string{
+		clawPoseMugUnderMachineApproach, clawPoseMugReadyForCoffee,
+		clawPoseMugWaterApproach, clawPoseMugReadyForWater, mugPoseObserve,
+	}
+	for _, name := range mugPoses {
+		if hasPose(base, name) {
+			t.Errorf("base config should not require mug pose %q", name)
+		}
+	}
+	mug := (&beanjaminCoffee{cfg: &Config{CanServeMugDrinks: true}}).requiredPoses()
+	for _, name := range mugPoses {
+		if !hasPose(mug, name) {
+			t.Errorf("can_serve_mug_drinks should require %q", name)
+		}
 	}
 
 	beans := (&beanjaminCoffee{cfg: &Config{BeanOptions: []BeanOption{{Name: "decaf"}, {Name: "light_roast"}}}}).requiredPoses()
@@ -100,5 +121,20 @@ func TestRequiredPosesConditional(t *testing.T) {
 	}
 	if !hasPose(latte, glassPoseObserve) {
 		t.Error("can_serve_iced_latte should still require the iced poses it builds on")
+	}
+}
+
+func TestMugReadyYawMismatchDeg(t *testing.T) {
+	// A grasp pointing along the horizontal heading yaw: tool +Z is the approach.
+	heading := func(deg float64) spatialmath.Pose {
+		r := deg * math.Pi / 180
+		return spatialmath.NewPose(r3.Vector{}, &spatialmath.OrientationVector{OX: math.Cos(r), OY: math.Sin(r)})
+	}
+	for _, tc := range []struct{ a, b, want float64 }{
+		{0, 0, 0}, {10, 20, 10}, {175, -175, 10},
+	} {
+		if got := mugReadyYawMismatchDeg(heading(tc.a), heading(tc.b)); math.Abs(got-tc.want) > 1e-6 {
+			t.Errorf("mismatch(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
 	}
 }

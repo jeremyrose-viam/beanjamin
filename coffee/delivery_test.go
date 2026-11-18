@@ -9,6 +9,16 @@ import (
 	"beanjamin/coffee/order"
 )
 
+func TestDeliveryCupType(t *testing.T) {
+	for drink, want := range map[string]string{
+		"espresso": "cup", "lungo": "cup", "iced_coffee": "glass", "americano": "mug", "hot_water": "mug",
+	} {
+		if got := deliveryCupType(drink); got != want {
+			t.Errorf("deliveryCupType(%q) = %q, want %q", drink, got, want)
+		}
+	}
+}
+
 func TestDeliveryOrder_OldestActive(t *testing.T) {
 	c, _ := newTestCoffee(t, nil)
 	if _, err := c.deliveryMachineHeartbeat(map[string]any{"state": "running", "mode": "dock"}); err != nil {

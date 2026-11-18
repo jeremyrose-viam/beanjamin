@@ -10,6 +10,8 @@ import (
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/testutils/inject"
+
+	"beanjamin/coffee/geom"
 )
 
 // requireVecEqual fails the test unless got is within tol of want. Wraps the
@@ -280,7 +282,7 @@ func TestReattachUsesCache(t *testing.T) {
 		t.Fatalf("reattach must be a no-op when nothing is cached")
 	}
 
-	s.scene().cacheHeldGeometry(pickupLabelCup, testBox(t, spatialmath.NewZeroPose()))
+	s.scene().cacheHeldGeometry(pickupLabelCup, []spatialmath.Geometry{testBox(t, spatialmath.NewZeroPose())})
 	if err := s.reattachGeometry(pickupLabelCup); err != nil {
 		t.Fatalf("reattach: %v", err)
 	}
@@ -359,12 +361,12 @@ func TestCacheRoutingByLabel(t *testing.T) {
 	s := &beanjaminCoffee{settledScene: &sceneState{}, cfg: &Config{}}
 	cup := testBox(t, spatialmath.NewZeroPose())
 	glass := testBox(t, spatialmath.NewPoseFromPoint(r3.Vector{Z: 10}))
-	s.scene().cacheHeldGeometry(pickupLabelCup, cup)
-	s.scene().cacheHeldGeometry(pickupLabelGlass, glass)
-	if s.scene().cachedHeldGeometry(pickupLabelCup) != cup {
+	s.scene().cacheHeldGeometry(pickupLabelCup, []spatialmath.Geometry{cup})
+	s.scene().cacheHeldGeometry(pickupLabelGlass, []spatialmath.Geometry{glass})
+	if s.scene().cachedHeldGeometry(pickupLabelCup)[0] != cup {
 		t.Fatalf("cup cache mismatch")
 	}
-	if s.scene().cachedHeldGeometry(pickupLabelGlass) != glass {
+	if s.scene().cachedHeldGeometry(pickupLabelGlass)[0] != glass {
 		t.Fatalf("glass cache mismatch")
 	}
 }
@@ -496,7 +498,7 @@ func TestSwapFilterForGlassNeedsGlassConfig(t *testing.T) {
 func TestSwapFilterForGlassKeepsAttachedItem(t *testing.T) {
 	s := heldGeomService(t, filterOnArmFS(t))
 	addHeldItem(t, s, testBox(t, spatialmath.NewZeroPose()))
-	s.scene().cacheHeldGeometry(pickupLabelGlass, testBox(t, spatialmath.NewZeroPose()))
+	s.scene().cacheHeldGeometry(pickupLabelGlass, []spatialmath.Geometry{testBox(t, spatialmath.NewZeroPose())})
 
 	restore, err := s.swapFilterForGlass(context.Background())
 	if err != nil {
@@ -540,13 +542,13 @@ func glassSwapService(t *testing.T) *beanjaminCoffee {
 func TestSwapFilterForGlassKeepsCachedGrasp(t *testing.T) {
 	s := glassSwapService(t)
 	cached := testBox(t, spatialmath.NewZeroPose())
-	s.scene().cacheHeldGeometry(pickupLabelGlass, cached)
+	s.scene().cacheHeldGeometry(pickupLabelGlass, []spatialmath.Geometry{cached})
 
 	restore, err := s.swapFilterForGlass(context.Background())
 	if err != nil {
 		t.Fatalf("swapFilterForGlass: %v", err)
 	}
-	if s.scene().heldGlassGeom != cached {
+	if s.scene().heldGlassGeom[0] != cached {
 		t.Error("the stand-in displaced the cached glass grasp")
 	}
 	if !s.scene().heldItemAttached {
@@ -557,7 +559,7 @@ func TestSwapFilterForGlassKeepsCachedGrasp(t *testing.T) {
 	if s.scene().heldItemAttached {
 		t.Error("the stand-in outlived the action")
 	}
-	if s.scene().heldGlassGeom != cached {
+	if s.scene().heldGlassGeom[0] != cached {
 		t.Error("the restore cleared the cached glass grasp")
 	}
 }
@@ -583,7 +585,7 @@ func TestSwapFilterForGlassKeepsItemAttachedByTheAction(t *testing.T) {
 // addHeldItem publishes a scene with gripperLocal attached as the held item.
 func addHeldItem(t *testing.T, s *beanjaminCoffee, gripperLocal spatialmath.Geometry) {
 	t.Helper()
-	if err := s.editScene(func(sc *sceneState) error { return sc.addHeldItemFrame(gripperLocal) }); err != nil {
+	if err := s.editScene(func(sc *sceneState) error { return sc.addHeldItemFrame([]spatialmath.Geometry{gripperLocal}) }); err != nil {
 		t.Fatalf("addHeldItemFrame: %v", err)
 	}
 }
@@ -595,4 +597,138 @@ func stageHeldGlassAt(s *beanjaminCoffee, fsInputs referenceframe.FrameSystemInp
 		_, err := sc.stageHeldGlass(placement{inputs: fsInputs})
 		return err
 	})
+}
+
+// testMug returns a mug's [body, handle] boxes centered at centroid.
+func testMug(t *testing.T, centroid r3.Vector) []spatialmath.Geometry {
+	t.Helper()
+	mug, err := geom.MugGeometries(centroid, r3.Vector{X: 80, Y: 80, Z: 95}, 25, 30, 0, pickupLabelMug)
+	if err != nil {
+		t.Fatalf("MugGeometries: %v", err)
+	}
+	return mug
+}
+
+// armlessService is a held-geometry service over fs whose arm has no joints.
+func armlessService(t *testing.T, fs *referenceframe.FrameSystem) *beanjaminCoffee {
+	t.Helper()
+	s := heldGeomService(t, fs)
+	s.arm = &inject.Arm{CurrentInputsFunc: func(context.Context) ([]referenceframe.Input, error) {
+		return nil, nil
+	}}
+	return s
+}
+
+// heldItemGeometries returns the geometries the held-item frame carries.
+func heldItemGeometries(t *testing.T, s *beanjaminCoffee) []spatialmath.Geometry {
+	t.Helper()
+	frame := s.scene().fs.Frame(heldItemFrameName)
+	if frame == nil {
+		t.Fatal("no held-item frame")
+	}
+	gif, err := frame.Geometries([]referenceframe.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gif.Geometries()
+}
+
+// Every geometry of a detected item reaches the frame and the cache, the label
+// of the body survives the transform into the gripper frame, and heldItemLabel
+// reads it back.
+func TestAttachKeepsEveryGeometry(t *testing.T) {
+	fs := stagingFS(t, false)
+	s := armlessService(t, fs)
+	mug := testMug(t, r3.Vector{Z: stagingGripZ})
+
+	if err := s.attachDetectedGeometries(context.Background(), pickupLabelMug, mug); err != nil {
+		t.Fatalf("attachDetectedGeometries: %v", err)
+	}
+	geos := heldItemGeometries(t, s)
+	if len(geos) != 2 {
+		t.Fatalf("held-item frame has %d geometries, want 2", len(geos))
+	}
+	if got := s.scene().cachedHeldGeometry(pickupLabelMug); len(got) != 2 {
+		t.Fatalf("mug cache has %d geometries, want 2", len(got))
+	}
+	if got := s.scene().heldItemLabel(); got != pickupLabelMug {
+		t.Fatalf("heldItemLabel = %q, want %q", got, pickupLabelMug)
+	}
+	if got := geos[1].Label(); got != pickupLabelMug+"-handle" {
+		t.Fatalf("handle label = %q, want %q", got, pickupLabelMug+"-handle")
+	}
+	// Body at the grip point, handle beside it, as detected.
+	requireVecEqual(t, geos[0].Pose().Point(), r3.Vector{}, 1e-6)
+	if (&sceneState{}).heldItemLabel() != "" {
+		t.Fatal("heldItemLabel must be empty with nothing held")
+	}
+}
+
+// The mug's slot is its own: a cup re-grabbed after a mug restores the cup.
+func TestCupAfterMugUsesCupCache(t *testing.T) {
+	fs := clawsStaticFS(t, spatialmath.NewZeroPose())
+	s := heldGeomService(t, fs)
+	if err := s.editScene(func(sc *sceneState) error {
+		if err := sc.addHeldItemFrame(testMug(t, r3.Vector{})); err != nil {
+			return err
+		}
+		sc.cacheHeldGeometry(pickupLabelMug, testMug(t, r3.Vector{}))
+		sc.cacheHeldGeometry(pickupLabelCup, []spatialmath.Geometry{testBox(t, spatialmath.NewZeroPose())})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.detachHeldGeometry()
+
+	if err := s.reattachGeometry(pickupLabelCup); err != nil {
+		t.Fatal(err)
+	}
+	geos := heldItemGeometries(t, s)
+	if len(geos) != 1 || geos[0].Label() != pickupLabelCup {
+		t.Fatalf("held-item geometries = %d (first %q), want exactly the cup", len(geos), geos[0].Label())
+	}
+}
+
+// Seating the mug body on the table shifts the handle by the same amount.
+func TestStageHeldItemShiftsHandleWithBody(t *testing.T) {
+	fs := stagingFS(t, true)
+	s := armlessService(t, fs)
+	mug := testMug(t, r3.Vector{}) // gripper-local: body centered on the grip point
+	if err := s.editScene(func(sc *sceneState) error { return sc.addHeldItemFrame(mug) }); err != nil {
+		t.Fatal(err)
+	}
+	// Body base is 47.5 mm below the grip point; the table top is at Z=600.
+	wantDZ := 600 + surfaceRestClearanceMm - (stagingGripZ - 47.5)
+
+	if err := stageHeldMugAt(s, referenceframe.NewZeroInputs(fs)); err != nil {
+		t.Fatal(err)
+	}
+	if s.scene().heldItemAttached || s.scene().fs.Frame(heldItemFrameName) != nil {
+		t.Fatal("held-item frame must be gone once staged")
+	}
+	if !s.scene().stagedMugPlaced {
+		t.Fatal("stagedMugPlaced must be set once staged")
+	}
+	staged, err := s.scene().stagedGeometry(stagedMug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(staged) != 2 {
+		t.Fatalf("staged frame has %d geometries, want 2", len(staged))
+	}
+	for i, g := range mug {
+		want := g.Pose().Point().Add(r3.Vector{Z: stagingGripZ + wantDZ})
+		requireVecEqual(t, staged[i].Pose().Point(), want, 1e-6)
+	}
+
+	// The re-grab takes both boxes back into the gripper and drops the obstacle.
+	if err := s.regrabStagedMug(context.Background()); err != nil {
+		t.Fatalf("regrabStagedMug: %v", err)
+	}
+	if s.scene().stagedMugPlaced || s.scene().fs.Frame(stagedMugFrameName) != nil {
+		t.Fatal("the staged-mug obstacle must be gone once re-grabbed")
+	}
+	if got := len(heldItemGeometries(t, s)); got != 2 {
+		t.Fatalf("re-grabbed mug has %d geometries, want 2", got)
+	}
 }

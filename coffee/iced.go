@@ -202,15 +202,68 @@ func (s *beanjaminCoffee) serveIcedLatte(ctx, cancelCtx context.Context) (int, e
 // Split from graspBrewedCup so the brew path can run it during the pour, while
 // the arm would otherwise sit idle; graspBrewedCup then finishes once the pour is.
 func (s *beanjaminCoffee) approachBrewedCup(ctx, cancelCtx context.Context) error {
+	return s.approachBrewedVessel(ctx, cancelCtx, s.cupVessel())
+}
+
+// approachBrewedVessel is approachBrewedCup for any vessel: the claws go to the
+// vessel's under-machine approach pose and the gripper opens.
+func (s *beanjaminCoffee) approachBrewedVessel(ctx, cancelCtx context.Context, v vessel) error {
+	name := "approach_brewed_" + v.label
 	if s.gripper == nil {
-		return fmt.Errorf("approach_brewed_cup: no gripper configured")
+		return fmt.Errorf("%s: no gripper configured", name)
 	}
-	approachStep := Step{PoseName: clawPoseCupUnderMachineApproach, PoseSwitch: s.clawsSw}
+	approachStep := Step{PoseName: v.underApproach, PoseSwitch: s.clawsSw}
 	if err := s.executeStep(ctx, cancelCtx, approachStep); err != nil {
-		return fmt.Errorf("approach_brewed_cup: %w", err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	if err := s.openGripper(ctx); err != nil {
-		return fmt.Errorf("approach_brewed_cup: %w", err)
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	return nil
+}
+
+// graspBrewedInPlace takes the vessel once the gripper is open above it
+// (approachBrewedVessel): linear descent + grab, restoring its held geometry.
+// There is no retreat; the arm is left at v.readyForCoffee holding the vessel.
+func (s *beanjaminCoffee) graspBrewedInPlace(ctx, cancelCtx context.Context, v vessel) error {
+	name := "grasp_brewed_" + v.label
+	if s.gripper == nil {
+		return fmt.Errorf("%s: no gripper configured", name)
+	}
+	grabStep := Step{PoseName: v.readyForCoffee, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint, Pause: shortPause,
+		MoveOptions: s.slowMoveOptions()}
+	if err := s.executeStep(ctx, cancelCtx, grabStep); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if err := s.grabAndVerifyHolding(ctx, "brewed "+v.label); err != nil {
+		return fmt.Errorf("%s: grab gripper: %w", name, err)
+	}
+	// The vessel was tracked at pickup and released under the machine; restore its
+	// geometry now that it's back in the gripper so the retreat routes around it.
+	// grabAndVerifyHolding only returns nil on a confirmed grab, so this never
+	// reattaches onto empty jaws.
+	if err := s.reattachGeometry(v.label); err != nil {
+		s.activeOrderLogger().Warnf("%s: reattach %s geometry failed, continuing untracked: %v", name, v.label, err)
+	}
+	// Nothing was cached to reattach (e.g. a manually-stepped serving that never ran
+	// the vision pickup) — model the vessel from its configured dimensions so the
+	// pour and the shelf placement still carry it as a tracked held-item instead of
+	// an untracked grip-point move.
+	if !s.scene().heldItemAttached {
+		if err := v.attachConfigured(ctx); err != nil {
+			s.activeOrderLogger().Warnf("%s: model %s from %s failed, continuing untracked: %v", name, v.label, v.dimsField, err)
+		}
+	}
+	return nil
+}
+
+// retreatBrewedVessel is the linear retreat with the vessel in hand, back to
+// v.underApproach.
+func (s *beanjaminCoffee) retreatBrewedVessel(ctx, cancelCtx context.Context, v vessel) error {
+	retreatStep := Step{PoseName: v.underApproach, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint, AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions),
+		MoveOptions: s.slowMoveOptions()}
+	if err := s.executeStep(ctx, cancelCtx, retreatStep); err != nil {
+		return fmt.Errorf("grasp_brewed_%s: %w", v.label, err)
 	}
 	return nil
 }
@@ -219,39 +272,11 @@ func (s *beanjaminCoffee) approachBrewedCup(ctx, cancelCtx context.Context) erro
 // linear descent + grab -> linear retreat. On return the cup is held by the gripper
 // and the arm is back at cup_under_machine_approach.
 func (s *beanjaminCoffee) graspBrewedCup(ctx, cancelCtx context.Context) error {
-	if s.gripper == nil {
-		return fmt.Errorf("grasp_brewed_cup: no gripper configured")
+	v := s.cupVessel()
+	if err := s.graspBrewedInPlace(ctx, cancelCtx, v); err != nil {
+		return err
 	}
-	grabStep := Step{PoseName: clawPoseCupReadyForCoffee, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint, Pause: shortPause,
-		MoveOptions: s.slowMoveOptions()}
-	if err := s.executeStep(ctx, cancelCtx, grabStep); err != nil {
-		return fmt.Errorf("grasp_brewed_cup: %w", err)
-	}
-	if err := s.grabAndVerifyHolding(ctx, "brewed cup"); err != nil {
-		return fmt.Errorf("grasp_brewed_cup: grab gripper: %w", err)
-	}
-	// The cup was tracked at pickup and released under the machine; restore its
-	// geometry now that it's back in the gripper so the retreat routes around it.
-	// grabAndVerifyHolding only returns nil on a confirmed grab, so this never
-	// reattaches onto empty jaws.
-	if err := s.reattachGeometry(pickupLabelCup); err != nil {
-		s.activeOrderLogger().Warnf("grasp_brewed_cup: reattach cup geometry failed, continuing untracked: %v", err)
-	}
-	// Nothing was cached to reattach (e.g. a manually-stepped serving that never ran
-	// the vision cup pickup) — model the cup from cup_dimensions so the pour and the
-	// shelf placement still carry it as a tracked held-item instead of an untracked
-	// grip-point move.
-	if !s.scene().heldItemAttached {
-		if err := s.attachConfiguredCupGeometry(ctx); err != nil {
-			s.activeOrderLogger().Warnf("grasp_brewed_cup: model cup from cup_dimensions failed, continuing untracked: %v", err)
-		}
-	}
-	retreatStep := Step{PoseName: clawPoseCupUnderMachineApproach, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint, AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions),
-		MoveOptions: s.slowMoveOptions()}
-	if err := s.executeStep(ctx, cancelCtx, retreatStep); err != nil {
-		return fmt.Errorf("grasp_brewed_cup: %w", err)
-	}
-	return nil
+	return s.retreatBrewedVessel(ctx, cancelCtx, v)
 }
 
 // grabBrewedCupFromMachine retrieves the brewed cup from under the machine in one
@@ -262,6 +287,20 @@ func (s *beanjaminCoffee) grabBrewedCupFromMachine(ctx, cancelCtx context.Contex
 		return err
 	}
 	return s.graspBrewedCup(ctx, cancelCtx)
+}
+
+// grabBrewedMugFromMachine is grabBrewedCupFromMachine for a mug
+// (can_serve_mug_drinks): the same approach, open, descend and grab, then the
+// retreat to mug_under_machine_approach.
+func (s *beanjaminCoffee) grabBrewedMugFromMachine(ctx, cancelCtx context.Context) error {
+	v := s.mugVessel()
+	if err := s.approachBrewedVessel(ctx, cancelCtx, v); err != nil {
+		return err
+	}
+	if err := s.graspBrewedInPlace(ctx, cancelCtx, v); err != nil {
+		return err
+	}
+	return s.retreatBrewedVessel(ctx, cancelCtx, v)
 }
 
 // grabStagedGlass picks the iced glass back up from the staging area: approach

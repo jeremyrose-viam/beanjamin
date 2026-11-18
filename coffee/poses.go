@@ -6,12 +6,15 @@ package coffee
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/golang/geo/r3"
 	toggleswitch "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/spatialmath"
 
+	"beanjamin/coffee/geom"
 	"beanjamin/coffee/order"
 )
 
@@ -75,6 +78,14 @@ const (
 	clawPoseMilkPourApproach = "milk_pour_approach" // milk bottle upright above the staged glass (milk_pour_approach_relative_pose)
 	clawPoseMilkPour         = "milk_pour"          // milk bottle tilted to pour into the glass (milk_pour_relative_pose)
 
+	// mug-drink claw poses (only required when can_serve_mug_drinks is set; the
+	// mug itself is vision-detected via the mug observe switch). The ready poses
+	// are where the mug sits under the coffee spout and the hot-water spout.
+	clawPoseMugUnderMachineApproach = "mug_under_machine_approach"
+	clawPoseMugReadyForCoffee       = "mug_ready_for_coffee"
+	clawPoseMugWaterApproach        = "mug_water_approach"
+	clawPoseMugReadyForWater        = "mug_ready_for_water"
+
 	// camera pose switches (extra vantages live on
 	// the same switch and are enumerated at runtime).
 	camPoseCupObserve = "cup_observe"
@@ -90,6 +101,14 @@ const (
 // glassPoseObserve is the home/recovery observe pose on the glass observe
 // switch (parallel to camPoseCupObserve on the cup observe switch).
 const glassPoseObserve = "glass_observe"
+
+// mugPoseObserve is the home/recovery observe pose on the mug observe switch.
+const mugPoseObserve = "mug_observe"
+
+// mugReadyYawToleranceDeg is how far apart the two mug ready poses' approach
+// headings may be before startup warns: the mug is carried from one to the
+// other held in the same grip.
+const mugReadyYawToleranceDeg = 5.0
 
 // milkApproachPose is the claws-switch pose in front of the bottle at a fridge
 // spot (MilkOption.Spot), with the door open: where the gripper lines up before
@@ -203,6 +222,16 @@ func (s *beanjaminCoffee) requiredPoses() []requiredPose {
 		)
 	}
 
+	if s.cfg.CanServeMugDrinks {
+		poses = append(poses,
+			requiredPose{s.clawsSw, clawPoseMugUnderMachineApproach},
+			requiredPose{s.clawsSw, clawPoseMugReadyForCoffee},
+			requiredPose{s.clawsSw, clawPoseMugWaterApproach},
+			requiredPose{s.clawsSw, clawPoseMugReadyForWater},
+			requiredPose{s.mugObserveSw, mugPoseObserve},
+		)
+	}
+
 	if s.cfg.CanServeIcedLatte {
 		// Each milk_options spot's approach and grab. The door is tracked through
 		// its hinge arc, and the pour is resolved against the staged glass
@@ -243,8 +272,33 @@ func (s *beanjaminCoffee) validateConfiguredPoses(ctx context.Context) error {
 			return fmt.Errorf("pose validation: %w", err)
 		}
 	}
+	if s.cfg.CanServeMugDrinks {
+		coffee, err := s.fetchPose(ctx, s.clawsSw, clawPoseMugReadyForCoffee)
+		if err != nil {
+			return fmt.Errorf("pose validation: required pose %q: %w", clawPoseMugReadyForCoffee, err)
+		}
+		water, err := s.fetchPose(ctx, s.clawsSw, clawPoseMugReadyForWater)
+		if err != nil {
+			return fmt.Errorf("pose validation: required pose %q: %w", clawPoseMugReadyForWater, err)
+		}
+		if d := mugReadyYawMismatchDeg(coffee.pose, water.pose); d > mugReadyYawToleranceDeg {
+			s.logger.Warnf("pose validation: %q and %q approach the mug from headings %.1f degrees apart (tolerance %.0f); the mug is carried between them in one grip, so they should match",
+				clawPoseMugReadyForCoffee, clawPoseMugReadyForWater, d, mugReadyYawToleranceDeg)
+		}
+	}
 	s.logger.Infof("pose validation: %d configured pose(s) resolved and non-zero", len(poses))
 	return nil
+}
+
+// mugReadyYawMismatchDeg is the absolute difference, in degrees wrapped to
+// [0, 180], between the approach headings of the two mug ready poses.
+func mugReadyYawMismatchDeg(coffee, water spatialmath.Pose) float64 {
+	d := math.Abs(geom.GraspYaw(coffee.Orientation())-geom.GraspYaw(water.Orientation())) * 180 / math.Pi
+	d = math.Mod(d, 360)
+	if d > 180 {
+		d = 360 - d
+	}
+	return d
 }
 
 // grinderPoseNames are the filter-switch poses at one grinder: approach, the

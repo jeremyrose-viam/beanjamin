@@ -23,3 +23,22 @@ func TestEnqueueOrder_RejectsWrongTypedFieldBeforeQueueing(t *testing.T) {
 		t.Errorf("a malformed payload should not be spoken to, got %v", calls)
 	}
 }
+
+func TestEnqueueRejectsMugDrinkWhenOff(t *testing.T) {
+	c, _ := newTestCoffee(t, nil)
+	_, err := c.enqueueOrder(context.Background(), map[string]any{"drink": "americano", "customer_name": "Alice"})
+	if err == nil || !strings.Contains(err.Error(), "can_serve_mug_drinks=false") {
+		t.Fatalf("error = %v, want one naming can_serve_mug_drinks=false", err)
+	}
+	if c.queue.Len() != 0 {
+		t.Errorf("queue len = %d, want 0", c.queue.Len())
+	}
+
+	c, _ = newTestCoffee(t, &Config{CanServeMugDrinks: true})
+	if _, err := c.enqueueOrder(context.Background(), map[string]any{"drink": "americano", "customer_name": "Alice"}); err != nil {
+		t.Fatalf("americano with flag on: %v", err)
+	}
+	if c.queue.Len() != 1 {
+		t.Errorf("queue len = %d, want 1", c.queue.Len())
+	}
+}

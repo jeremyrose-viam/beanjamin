@@ -110,3 +110,71 @@ func TestServingSlotStoreCorruptFile(t *testing.T) {
 		t.Errorf("get() with a corrupt file = %d, want 0", got)
 	}
 }
+
+// holdLabelled attaches a box labelled label as the held item.
+func holdLabelled(t *testing.T, s *beanjaminCoffee, label string) {
+	t.Helper()
+	box, err := spatialmath.NewBox(spatialmath.NewZeroPose(), r3.Vector{X: 40, Y: 40, Z: 80}, label)
+	if err != nil {
+		t.Fatalf("new box: %v", err)
+	}
+	if err := s.editScene(func(sc *sceneState) error { return sc.addHeldItemFrame([]spatialmath.Geometry{box}) }); err != nil {
+		t.Fatalf("addHeldItemFrame: %v", err)
+	}
+}
+
+func TestServingOffsetsFallBackForMug(t *testing.T) {
+	s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+	sharedGrab := &RelativePose{Z: 1}
+	sharedApproach := &RelativePose{Z: 2}
+	s.cfg.ServingGrabRelativePose = sharedGrab
+	s.cfg.ServingApproachRelativePose = sharedApproach
+	holdLabelled(t, s, pickupLabelMug)
+
+	grab, approach := s.servingOffsets()
+	if grab != sharedGrab || approach != sharedApproach {
+		t.Fatalf("no overrides: got %v, %v; want shared offsets", grab, approach)
+	}
+
+	mugGrab := &RelativePose{Z: 10}
+	s.cfg.MugServingGrabRelativePose = mugGrab
+	grab, approach = s.servingOffsets()
+	if grab != mugGrab || approach != sharedApproach {
+		t.Fatalf("grab override only: got %v, %v", grab, approach)
+	}
+
+	mugApproach := &RelativePose{Z: 20}
+	s.cfg.MugServingGrabRelativePose = nil
+	s.cfg.MugServingApproachRelativePose = mugApproach
+	grab, approach = s.servingOffsets()
+	if grab != sharedGrab || approach != mugApproach {
+		t.Fatalf("approach override only: got %v, %v", grab, approach)
+	}
+}
+
+func TestServingOffsetsCupIgnoresMugOverrides(t *testing.T) {
+	s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+	sharedGrab := &RelativePose{Z: 1}
+	sharedApproach := &RelativePose{Z: 2}
+	s.cfg.ServingGrabRelativePose = sharedGrab
+	s.cfg.ServingApproachRelativePose = sharedApproach
+	s.cfg.MugServingGrabRelativePose = &RelativePose{Z: 10}
+	s.cfg.MugServingApproachRelativePose = &RelativePose{Z: 20}
+	holdLabelled(t, s, "cup")
+
+	grab, approach := s.servingOffsets()
+	if grab != sharedGrab || approach != sharedApproach {
+		t.Fatalf("cup held: got %v, %v; want shared offsets", grab, approach)
+	}
+}
+
+func TestDropZOffsetForMug(t *testing.T) {
+	s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+	s.cfg.MugDimensions = &ContainerDimensions{HeightMm: 97}
+	s.cfg.MugGrabRelativePose = &RelativePose{Z: 5}
+	holdLabelled(t, s, pickupLabelMug)
+	// Like every other container, a mug drops at the held item's half-height.
+	if got := s.servingAreaDropZOffset(); got != 40 {
+		t.Fatalf("mug drop offset = %g, want the held half-height 40", got)
+	}
+}
