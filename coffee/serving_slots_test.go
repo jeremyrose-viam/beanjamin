@@ -1,9 +1,11 @@
 package coffee
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -108,5 +110,153 @@ func TestServingSlotStoreCorruptFile(t *testing.T) {
 	// Unreadable content must degrade to slot 0 rather than failing construction.
 	if got := newServingSlotStore(logger, servingAreaFrameName, servingSlotFile).get(); got != 0 {
 		t.Errorf("get() with a corrupt file = %d, want 0", got)
+	}
+}
+
+// holdLabelled attaches a box labelled label as the held item.
+func holdLabelled(t *testing.T, s *beanjaminCoffee, label string) {
+	t.Helper()
+	box, err := spatialmath.NewBox(spatialmath.NewZeroPose(), r3.Vector{X: 40, Y: 40, Z: 80}, label)
+	if err != nil {
+		t.Fatalf("new box: %v", err)
+	}
+	if err := s.editScene(func(sc *sceneState) error { return sc.addHeldItemFrame([]spatialmath.Geometry{box}) }); err != nil {
+		t.Fatalf("addHeldItemFrame: %v", err)
+	}
+}
+
+func TestServingOffsetsFallBackForMug(t *testing.T) {
+	s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+	sharedGrab := &RelativePose{Z: 1}
+	sharedApproach := &RelativePose{Z: 2}
+	s.cfg.ServingGrabRelativePose = sharedGrab
+	s.cfg.ServingApproachRelativePose = sharedApproach
+	holdLabelled(t, s, pickupLabelMug)
+
+	grab, approach := s.servingOffsets()
+	if grab != sharedGrab || approach != sharedApproach {
+		t.Fatalf("no overrides: got %v, %v; want shared offsets", grab, approach)
+	}
+
+	mugGrab := &RelativePose{Z: 10}
+	s.cfg.MugServingGrabRelativePose = mugGrab
+	grab, approach = s.servingOffsets()
+	if grab != mugGrab || approach != sharedApproach {
+		t.Fatalf("grab override only: got %v, %v", grab, approach)
+	}
+
+	mugApproach := &RelativePose{Z: 20}
+	s.cfg.MugServingGrabRelativePose = nil
+	s.cfg.MugServingApproachRelativePose = mugApproach
+	grab, approach = s.servingOffsets()
+	if grab != sharedGrab || approach != mugApproach {
+		t.Fatalf("approach override only: got %v, %v", grab, approach)
+	}
+}
+
+func TestServingOffsetsCupIgnoresMugOverrides(t *testing.T) {
+	s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+	sharedGrab := &RelativePose{Z: 1}
+	sharedApproach := &RelativePose{Z: 2}
+	s.cfg.ServingGrabRelativePose = sharedGrab
+	s.cfg.ServingApproachRelativePose = sharedApproach
+	s.cfg.MugServingGrabRelativePose = &RelativePose{Z: 10}
+	s.cfg.MugServingApproachRelativePose = &RelativePose{Z: 20}
+	holdLabelled(t, s, "cup")
+
+	grab, approach := s.servingOffsets()
+	if grab != sharedGrab || approach != sharedApproach {
+		t.Fatalf("cup held: got %v, %v; want shared offsets", grab, approach)
+	}
+}
+
+func TestDropZOffsetForMug(t *testing.T) {
+	s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+	s.cfg.MugDimensions = &ContainerDimensions{HeightMm: 97}
+	s.cfg.MugGrabRelativePose = &RelativePose{Z: 5}
+	holdLabelled(t, s, pickupLabelMug)
+	// Like every other container, a mug drops at the held item's half-height.
+	if got := s.servingAreaDropZOffset(); got != 40 {
+		t.Fatalf("mug drop offset = %g, want the held half-height 40", got)
+	}
+}
+
+// After the release the gripper withdraws straight back, level: the withdraw
+// pose is the approach pose's X/Y at the drop pose's Z and orientation, for the
+// shared serving offsets and the mug's alike.
+func TestSlotWithdrawPoseIsLevelWithTheDrop(t *testing.T) {
+	anchor := r3.Vector{X: 400, Y: -250, Z: 120}
+	for _, label := range []string{"cup", pickupLabelMug} {
+		s := heldGeomService(t, clawsStaticFS(t, spatialmath.NewZeroPose()))
+		s.cfg.ServingGrabRelativePose = &RelativePose{X: -10, Z: 5, OZ: 1}
+		s.cfg.ServingApproachRelativePose = &RelativePose{X: -186, Y: 3, Z: 26, OZ: 1}
+		s.cfg.MugServingGrabRelativePose = &RelativePose{X: -20, Z: 8, OX: 1, Theta: 15}
+		s.cfg.MugServingApproachRelativePose = &RelativePose{X: -196, Y: -4, Z: 40, OX: 1, Theta: 15}
+		holdLabelled(t, s, label)
+		grab, approach := s.servingOffsets()
+		dropPose, approachPose, withdrawPose := slotPlacementPoses(anchor, grab, approach)
+		w, d, a := withdrawPose.Point(), dropPose.Point(), approachPose.Point()
+		if math.Abs(w.Z-d.Z) > 1e-9 {
+			t.Errorf("%s: withdraw z = %.3f, want the drop z %.3f", label, w.Z, d.Z)
+		}
+		if math.Abs(w.X-a.X) > 1e-9 || math.Abs(w.Y-a.Y) > 1e-9 {
+			t.Errorf("%s: withdraw x/y = %.3f/%.3f, want the approach x/y %.3f/%.3f", label, w.X, w.Y, a.X, a.Y)
+		}
+		if !spatialmath.OrientationAlmostEqual(withdrawPose.Orientation(), dropPose.Orientation()) {
+			t.Errorf("%s: withdraw orientation %v, want the drop orientation %v", label, withdrawPose.Orientation(), dropPose.Orientation())
+		}
+		if math.Abs(a.Z-d.Z) < 1 {
+			t.Fatalf("%s: test offsets should put the approach above the drop", label)
+		}
+	}
+}
+
+// The withdrawal must end outside the area's shield: a withdraw point inside it
+// is refused (and not as a planning failure, so no other slot is tried), one
+// outside it or with no shield in the frame system passes.
+func TestWithdrawPointMustBeOutsideTheShield(t *testing.T) {
+	// A 200 x 200 x 100 mm shield centered at (500, 0, 150), turned 30 degrees
+	// about Z so the check has to respect its pose.
+	shieldPose := spatialmath.NewPose(r3.Vector{X: 500, Y: 0, Z: 150}, &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 30})
+	// The pose rides on the geometry, as the frame system's world-anchored
+	// obstacles carry theirs.
+	box, err := spatialmath.NewBox(shieldPose, r3.Vector{X: 200, Y: 200, Z: 100}, servingAreaShieldFrameName)
+	if err != nil {
+		t.Fatalf("new box: %v", err)
+	}
+	fs := clawsStaticFS(t, spatialmath.NewZeroPose())
+	shield, err := referenceframe.NewStaticFrameWithGeometry(servingAreaShieldFrameName, spatialmath.NewZeroPose(), box)
+	if err != nil {
+		t.Fatalf("new shield frame: %v", err)
+	}
+	if err := fs.AddFrame(shield, fs.World()); err != nil {
+		t.Fatalf("add shield frame: %v", err)
+	}
+	s := heldGeomService(t, fs)
+	area := s.servingArea()
+
+	err = s.checkWithdrawOutsideShield(area, r3.Vector{X: 560, Y: 20, Z: 130})
+	if err == nil {
+		t.Fatal("withdraw point inside the shield: want an error")
+	}
+	if errors.Is(err, errMotionPlanning) {
+		t.Errorf("error %v must not be a planning failure", err)
+	}
+	for _, want := range []string{servingAreaFrameName, servingAreaShieldFrameName, "x=560.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+	// Inside the shield's axis-aligned extent but outside the turned box.
+	if err := s.checkWithdrawOutsideShield(area, r3.Vector{X: 595, Y: 95, Z: 150}); err != nil {
+		t.Errorf("withdraw point outside the turned shield: %v", err)
+	}
+	// Below the shield.
+	if err := s.checkWithdrawOutsideShield(area, r3.Vector{X: 500, Y: 0, Z: 90}); err != nil {
+		t.Errorf("withdraw point below the shield: %v", err)
+	}
+	// No dirty-container shield in this frame system.
+	if err := s.checkWithdrawOutsideShield(s.dirtyContainerArea(), r3.Vector{X: 500, Y: 0, Z: 150}); err != nil {
+		t.Errorf("no shield frame: %v", err)
 	}
 }
