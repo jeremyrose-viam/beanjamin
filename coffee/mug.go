@@ -16,10 +16,10 @@ const stagedMugFrameName = "staged-mug"
 
 // slideMugToWater carries the full mug from under the group head to
 // mug_ready_for_water, under the hot water outlet, along a straight line,
-// slowly because the mug is full.
+// at the spillage-prevention speed because the mug is full.
 func (s *beanjaminCoffee) slideMugToWater(ctx, cancelCtx context.Context) error {
 	step := Step{PoseName: clawPoseMugReadyForWater, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint,
-		MoveOptions: s.slowMoveOptions(), AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions)}
+		MoveOptions: s.spillagePreventionMoveOptions(), AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions)}
 	if err := s.executeStep(ctx, cancelCtx, step); err != nil {
 		return fmt.Errorf("slide_mug_to_water: %w", err)
 	}
@@ -116,7 +116,7 @@ func (s *beanjaminCoffee) regrabMugAtWater(ctx, cancelCtx context.Context) error
 		s.activeOrderLogger().Warnf("regrab_mug_at_water: reattach mug geometry failed, continuing untracked: %v", err)
 	}
 	retreatStep := Step{PoseName: clawPoseMugWaterApproach, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint,
-		MoveOptions: s.slowMoveOptions(), AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions)}
+		MoveOptions: s.spillagePreventionMoveOptions(), AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions)}
 	if err := s.executeStep(ctx, cancelCtx, retreatStep); err != nil {
 		return fmt.Errorf("regrab_mug_at_water: %w", err)
 	}
