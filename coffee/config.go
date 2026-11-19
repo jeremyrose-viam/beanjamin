@@ -59,7 +59,12 @@ type Config struct {
 	GripperOpenTimeoutSec      float64 `json:"gripper_open_timeout_sec,omitempty"`
 	SlowMovementVelDegsPerSec  float64 `json:"slow_movement_vel_degs_per_sec,omitempty"`
 	SlowMovementAccDegsPerSec2 float64 `json:"slow_movement_acc_degs_per_sec2,omitempty"`
-	PortafilterShakeSec        float64 `json:"portafilter_shake_sec,omitempty"`
+	// SpillagePreventionVelDegsPerSec / SpillagePreventionAccDegsPerSec2 cap the
+	// moves that carry something that can spill or scatter (spillagePreventionMoveOptions).
+	// Each falls back to its slow-movement counterpart when unset.
+	SpillagePreventionVelDegsPerSec  float64 `json:"spillage_prevention_vel_degs_per_sec,omitempty"`
+	SpillagePreventionAccDegsPerSec2 float64 `json:"spillage_prevention_acc_degs_per_sec2,omitempty"`
+	PortafilterShakeSec              float64 `json:"portafilter_shake_sec,omitempty"`
 	// LockOvershootDegs over-rotates the portafilter lock pivot so the filter
 	// still reaches the authored angle after the claws slip on its handle under
 	// bayonet load, then unwinds back onto it (Step.PivotExtraDegrees).
@@ -182,11 +187,13 @@ type Config struct {
 	// tag's own +Y axis; negative points the other way. Defaults to 75.
 	DeliverySlotTagOffsetMm float64 `json:"delivery_slot_tag_offset_mm,omitempty"`
 	// DeliverySlotApproachRelativePose and DeliverySlotReleaseRelativePose are
-	// the gripper offsets composed onto the slot point, the way the serving pair
-	// is composed onto a shelf slot: the drink is carried to the approach pose,
-	// lowered in a straight line to the release pose, and released. Their
-	// orientation is the gripper's over the slot. Both are required with
-	// direct-to-cart placement.
+	// poses of the held container (the held-item frame) relative to the slot
+	// point: the drink is carried to the approach pose, lowered in a straight
+	// line to the release pose, and released. Their z is the height of the
+	// container's bottom above the slot point, so a cup and a taller glass land
+	// at the same level, and their orientation is the container's: o_z 1 keeps
+	// it upright and theta is the heading the gripper points in (0 = world +X,
+	// 90 = world +Y). Both are required with direct-to-cart placement.
 	DeliverySlotApproachRelativePose *RelativePose `json:"delivery_slot_approach_relative_pose,omitempty"`
 	DeliverySlotReleaseRelativePose  *RelativePose `json:"delivery_slot_release_relative_pose,omitempty"`
 	// DeliveryCartWaitSec is how long a ready drink waits for the cart to dock

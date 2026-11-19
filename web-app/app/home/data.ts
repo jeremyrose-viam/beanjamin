@@ -1,6 +1,7 @@
 import * as VIAM from "@viamrobotics/sdk";
 import { BSON } from "bson";
 import { splitDrink } from "../order/drinks";
+import { type OrderOutcome } from "./reliability";
 
 export const ORG_ID = "e76d1b3b-0468-4efd-bb7f-fb1d2b352fcb";
 export const LOCATION_ID = "oeq47g5p1m";
@@ -45,6 +46,8 @@ export interface OrderRecord {
   orderId: string;
   robotId: string;
   customerName: string;
+  // Empty for anonymous orders and readings from before emails were recorded.
+  customerEmail: string;
   drink: string;
   startTime: Date;
   endTime: Date;
@@ -82,6 +85,7 @@ interface RawOrderRow {
     readings?: {
       order_id?: string;
       customer_name?: string;
+      customer_email?: string;
       drink?: string;
       start_time?: Date | string;
       end_time?: Date | string;
@@ -135,6 +139,7 @@ function parseOrderResults(rows: RawOrderRow[]): OrderRecord[] {
       orderId: x.order_id ?? "",
       robotId: r.robot_id ?? "",
       customerName: x.customer_name ?? "",
+      customerEmail: x.customer_email ?? "",
       // Decaf espresso and lungo are still recorded under the legacy ids.
       ...splitDrink(x.drink ?? "", x.beans || (x.decaf ? "decaf" : undefined)),
       startTime: toDate(x.start_time),
@@ -490,6 +495,51 @@ export async function countVideosForOrders(
     }
   }
   return counts;
+}
+
+/**
+ * Every order outcome of the given machines over the last `days`, oldest
+ * first, trimmed to the fields reliability needs. Ordered on time_received
+ * like the other queries: a machine runs one order at a time, so capture
+ * order is order order.
+ */
+export async function loadOrderOutcomes(
+  client: VIAM.ViamClient,
+  machines: Machine[],
+  days: number
+): Promise<OrderOutcome[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const results = await runMQL<{
+    robot_id: string;
+    time: Date | string;
+    order_ok: boolean | null;
+    failed_step: string | null;
+  }>(client, [
+    {
+      $match: {
+        location_id: LOCATION_ID,
+        component_name: RESOURCE_NAME,
+        robot_id: { $in: machines.map((m) => m.id) },
+        time_received: { $gte: since },
+      },
+    },
+    { $sort: { time_received: 1 } },
+    {
+      $project: {
+        _id: 0,
+        robot_id: 1,
+        time: "$time_received",
+        order_ok: "$data.readings.order_ok",
+        failed_step: "$data.readings.failed_step",
+      },
+    },
+  ]);
+  return results.map((r) => ({
+    robotId: r.robot_id,
+    at: r.time instanceof Date ? r.time : new Date(r.time),
+    ok: r.order_ok === true,
+    failedStep: r.failed_step ?? "",
+  }));
 }
 
 export async function loadErrorsLast7Days(
