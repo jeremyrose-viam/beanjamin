@@ -639,11 +639,6 @@ func (s *beanjaminCoffee) regrabStaged(ctx context.Context, it stagedItem) error
 	return nil
 }
 
-// regrabStagedGlass is regrabStagedItem for the staged glass.
-func (sc *sceneState) regrabStagedGlass(at placement) (bool, error) {
-	return sc.regrabStagedItem(at, stagedGlass)
-}
-
 // regrabStagedItem moves the staged item from the world into the gripper, with
 // the frames placed by at, and reports whether there was one. The grasp is
 // modeled from where the item stands rather than restored from the pickup:
