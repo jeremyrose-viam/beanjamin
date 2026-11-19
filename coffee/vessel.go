@@ -100,10 +100,10 @@ func (s *beanjaminCoffee) graspBrewedInPlace(ctx, cancelCtx context.Context, v v
 }
 
 // retreatBrewedVessel is the linear retreat with the vessel in hand, back to
-// v.underApproach.
+// v.underApproach, at the spillage-prevention speed since it holds a full drink.
 func (s *beanjaminCoffee) retreatBrewedVessel(ctx, cancelCtx context.Context, v vessel) error {
 	retreatStep := Step{PoseName: v.underApproach, PoseSwitch: s.clawsSw, LinearConstraint: defaultApproachConstraint, AllowedCollisions: s.scene().heldItemSurfaceCollisions(heldItemMachineCollisions),
-		MoveOptions: s.slowMoveOptions()}
+		MoveOptions: s.spillagePreventionMoveOptions()}
 	if err := s.executeStep(ctx, cancelCtx, retreatStep); err != nil {
 		return fmt.Errorf("grasp_brewed_%s: %w", v.label, err)
 	}
