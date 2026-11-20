@@ -405,6 +405,8 @@ export async function getQueue(conn: ViamConnection): Promise<QueueStatus> {
       // A flat two minutes per queued drink, so the wait label renders.
       expected_wait_sec: devQueue.length * 120,
       iced_available: true,
+      // So the mug drinks render orderable in dev mode.
+      mug_drinks_available: true,
       spice_options: ["cinnamon", "nutmeg"],
     };
   }
