@@ -315,6 +315,11 @@ export interface QueueStatus {
   /** Why the ice machine is unavailable, for logs; "" while it is available. */
   iced_unavailable_reason?: string;
   /**
+   * Whether the machine serves the mug drinks (americano, hot_water), its
+   * can_serve_mug_drinks; absent from older modules.
+   */
+  mug_drinks_available?: boolean;
+  /**
    * The spices an iced latte can be dashed with (the machine's spice_options).
    * Absent when the machine offers no spice, and from older modules.
    */
