@@ -248,7 +248,7 @@ export const DRINKS: Drink[] = [
     id: "hot_water",
     label: "Hot Water",
     description: "Hot water in a mug",
-    image: "./americano.png",
+    image: "./hot-water.png",
     available: true,
   },
   {
